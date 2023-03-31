@@ -70,18 +70,20 @@ let listUsers _ =
     AnsiConsole.Write table
     
 let passValidator =
-    let err = function | msg -> ValidationResult.Error msg
+    let err s = ValidationResult.Error s
     let ok = ValidationResult.Success
+    let isBlankOrEmpty = String.IsNullOrWhiteSpace
     let any = String.exists
     let all = String.forall
+    
     function
-    | p when String.IsNullOrWhiteSpace p -> err "[red]Password cannot be empty[/]"
-    | p when p.Length < 8                -> err "[red]Password must be at least 8 characters[/]"
-    | p when any Char.IsWhiteSpace p     -> err "[red]Password cannot contain whitespace[/]"
-    | p when any Char.IsUpper p |> not   -> err "[red]Password must contain at least one uppercase letter[/]"
-    | p when any Char.IsLower p |> not   -> err "[red]Password must contain at least one lowercase letter[/]"
-    | p when all Char.IsLetter p         -> err "[red]Password must contain at least one non-letter character[/]"
-    | _                                  -> ok()
+    | p when p |> isBlankOrEmpty       -> err "[red]Password cannot be empty[/]"
+    | p when p.Length < 8              -> err "[red]Password must be at least 8 characters[/]"
+    | p when any Char.IsWhiteSpace p   -> err "[red]Password cannot contain whitespace[/]"
+    | p when any Char.IsUpper p |> not -> err "[red]Password must contain at least one uppercase letter[/]"
+    | p when any Char.IsLower p |> not -> err "[red]Password must contain at least one lowercase letter[/]"
+    | p when all Char.IsLetter p       -> err "[red]Password must contain at least one non-letter character[/]"
+    | _                                -> ok()
     
 let addUser _ =
     let name =
@@ -199,6 +201,7 @@ let removeItem (user: User) =
     user.RemoveItem item
 
 let makeTrue _ = true
+
 let selGroups = [
     (("Account", makeTrue), [
         ("Increment Balance", incBalance >> makeTrue)
