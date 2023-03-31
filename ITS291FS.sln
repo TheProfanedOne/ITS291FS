@@ -1,0 +1,16 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ITS291FS", "ITS291FS.fsproj", "{2C324AAB-C14E-49F9-A593-87059A8F03D3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2C324AAB-C14E-49F9-A593-87059A8F03D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2C324AAB-C14E-49F9-A593-87059A8F03D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2C324AAB-C14E-49F9-A593-87059A8F03D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2C324AAB-C14E-49F9-A593-87059A8F03D3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
