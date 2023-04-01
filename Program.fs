@@ -2,7 +2,8 @@
 open System.Collections.Generic
 open System.IO
 open System.Text.Json
-open ITS291FS
+open ITS291FS.User
+open ITS291FS.Utilities
 open Spectre.Console
 
 let users = Dictionary<string, User>()
@@ -70,20 +71,19 @@ let listUsers _ =
     AnsiConsole.Write table
     
 let passValidator =
-    let err s = ValidationResult.Error s
-    let ok = ValidationResult.Success
-    let isBlankOrEmpty = String.IsNullOrWhiteSpace
-    let any = String.exists
-    let all = String.forall
+    let inline err s = ValidationResult.Error s
+    let inline ok () = ValidationResult.Success()
+    let isNullOrWS = String.IsNullOrWhiteSpace
+    let whiteSpace = Char.IsWhiteSpace
     
     function
-    | p when p |> isBlankOrEmpty       -> err "[red]Password cannot be empty[/]"
-    | p when p.Length < 8              -> err "[red]Password must be at least 8 characters[/]"
-    | p when any Char.IsWhiteSpace p   -> err "[red]Password cannot contain whitespace[/]"
-    | p when any Char.IsUpper p |> not -> err "[red]Password must contain at least one uppercase letter[/]"
-    | p when any Char.IsLower p |> not -> err "[red]Password must contain at least one lowercase letter[/]"
-    | p when all Char.IsLetter p       -> err "[red]Password must contain at least one non-letter character[/]"
-    | _                                -> ok()
+    | p when p |> isNullOrWS     -> err "[red]Password cannot be empty[/]"
+    | p when p.Length < 8        -> err "[red]Password must be at least 8 characters[/]"
+    | p when p.any whiteSpace    -> err "[red]Password cannot contain whitespace[/]"
+    | p when p.none Char.IsUpper -> err "[red]Password must contain at least one uppercase letter[/]"
+    | p when p.none Char.IsLower -> err "[red]Password must contain at least one lowercase letter[/]"
+    | p when p.all Char.IsLetter -> err "[red]Password must contain at least one non-letter character[/]"
+    | _                          -> ok()
     
 let addUser _ =
     let name =
@@ -138,7 +138,7 @@ let incBalance (user: User) =
         amtPrompt.ValidationErrorMessage <- "[red]Amount must be positive[/]"
         amtPrompt.Show AnsiConsole.Console
     
-    AnsiConsole.Markup $"Adding [{User.balColor amount}]{amount:C}[/] to "
+    AnsiConsole.Markup $"Adding [{balColor amount}]{amount:C}[/] to "
     AnsiConsole.Write user.AccountBalanceMarkup; AnsiConsole.WriteLine()
     
     user.IncrementBalance amount
@@ -156,7 +156,7 @@ let decBalance (user: User) =
     try
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
-        AnsiConsole.Markup $"Removing [{User.balColor (amount * -1M)}]{amount:C}[/] from "
+        AnsiConsole.Markup $"Removing [{balColor (amount * -1M)}]{amount:C}[/] from "
         AnsiConsole.Write oldMarkup; AnsiConsole.WriteLine()
     with
     | :? BalanceOverdrawEcxeption as ex -> AnsiConsole.MarkupLine ex.Message

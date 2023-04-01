@@ -1,4 +1,4 @@
-namespace ITS291FS
+module ITS291FS.User
 
 open System
 open System.Text.Json
@@ -6,6 +6,11 @@ open System.Text.Json.Serialization
 open System.Collections.Generic
 open System.Security.Cryptography
 open Spectre.Console
+
+let balColor = function
+    | b when b < 0M -> "red"
+    | b when b > 0M -> "green"
+    | _             -> "yellow"
 
 type Item = { Name: string; Price: decimal; }
 
@@ -40,13 +45,8 @@ type User(name: string, pass: string, ?bal: decimal) =
     member private this.PassSpan with get() = ReadOnlySpan _pass
     member private this.SaltSpan with get() = ReadOnlySpan _salt
     
-    static member balColor = function
-        | b when b < 0M -> "red"
-        | b when b > 0M -> "green"
-        | _             -> "yellow"
-    
     member this.AccountBalanceMarkup with get() =
-        Markup.FromInterpolated $"[{User.balColor _bal}]{_bal:C}[/]"
+        Markup.FromInterpolated $"[{balColor _bal}]{_bal:C}[/]"
     
     member this.AddItem name price = { Name = name; Price = price; } |> _items.Add
     member this.RemoveItem item = _items.Remove item |> ignore
