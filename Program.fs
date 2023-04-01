@@ -39,17 +39,17 @@ let saveUsers path =
 
 let logon () =
     let user =
-        let userPrompt = TextPrompt<User> "[bold green]login[/] ([dim]username[/]):"
-        userPrompt.AddChoices(users.Values).HideChoices().WithConverter(fun user -> user.Username) |> ignore
-        userPrompt.InvalidChoiceMessage <- "[red]unknown login[/]"   
-        userPrompt.Show AnsiConsole.Console
+        let prompt = TextPrompt<User> "[bold green]login[/] ([dim]username[/]):"
+        prompt.AddChoices(users.Values).HideChoices().WithConverter(fun user -> user.Username) |> ignore
+        prompt.InvalidChoiceMessage <- "[red]unknown login[/]"   
+        prompt.Show AnsiConsole.Console
     
     let _ =
-        let passPrompt = TextPrompt<string> "Enter [cyan1]password[/]?"
-        passPrompt.Secret().PromptStyle <- "mediumorchid1_1"
-        user.CheckPassword |> passPrompt.Validate |> ignore
-        passPrompt.ValidationErrorMessage <- "[red]invalid password[/]"
-        passPrompt.Show AnsiConsole.Console
+        let prompt = TextPrompt<string> "Enter [cyan1]password[/]?"
+        prompt.Secret().PromptStyle <- "mediumorchid1_1"
+        user.CheckPassword |> prompt.Validate |> ignore
+        prompt.ValidationErrorMessage <- "[red]invalid password[/]"
+        prompt.Show AnsiConsole.Console
     
     user
 
@@ -128,7 +128,10 @@ let showUserDetails (user: User) =
             Markup "[mediumorchid1_1]Balance[/]",
             user.AccountBalanceMarkup
         ) |> AnsiConsole.Write
-    
+
+let markupWriteLine: Markup -> unit =
+    AnsiConsole.Write >> AnsiConsole.WriteLine
+
 let incBalance (user: User) =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [green]add[/]?"
@@ -137,12 +140,12 @@ let incBalance (user: User) =
         amtPrompt.Show AnsiConsole.Console
     
     AnsiConsole.Markup $"Adding [{balColor amount}]{amount:C}[/] to "
-    AnsiConsole.Write user.AccountBalanceMarkup; AnsiConsole.WriteLine()
+    markupWriteLine user.AccountBalanceMarkup
     
     user.IncrementBalance amount
     
     AnsiConsole.Markup "New balance: "
-    AnsiConsole.Write user.AccountBalanceMarkup; AnsiConsole.WriteLine()
+    markupWriteLine user.AccountBalanceMarkup
 
 let decBalance (user: User) =
     let amount =
@@ -154,13 +157,13 @@ let decBalance (user: User) =
     try
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
-        AnsiConsole.Markup $"Removing [{balColor (amount * -1M)}]{amount:C}[/] from "
-        AnsiConsole.Write oldMarkup; AnsiConsole.WriteLine()
-    with
-    | :? BalanceOverdrawEcxeption as ex -> AnsiConsole.MarkupLine ex.Message
+        AnsiConsole.Markup $"Removing [{amount * -1m |> balColor}]{amount:C}[/] from "
+        markupWriteLine oldMarkup
+    with | :? BalanceOverdrawEcxeption as ex ->
+        AnsiConsole.MarkupLine ex.Message
     
     AnsiConsole.Markup "Account Balance: "
-    AnsiConsole.Write user.AccountBalanceMarkup; AnsiConsole.WriteLine()
+    markupWriteLine user.AccountBalanceMarkup
         
 let listItems (user: User) =
     let table = Table().AddColumns(
@@ -169,7 +172,8 @@ let listItems (user: User) =
     )
     
     table.AddRows(user.Items, fun item -> [|
-        $"[green]{item.Name}[/]"; $"[blue]{item.Price:C}[/]"
+        Markup $"[green]{item.Name}[/]" :> IRenderable
+        Markup $"[blue]{item.Price:C}[/]"
     |]) |> AnsiConsole.Write
     
 let addItem (user: User) =
