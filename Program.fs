@@ -3,8 +3,9 @@ open System.Collections.Generic
 open System.IO
 open System.Text.Json
 open ITS291FS.User
-open ITS291FS.Utilities
+open ITS291FS.Extensions
 open Spectre.Console
+open Spectre.Console.Rendering
 
 let users = Dictionary<string, User>()
 
@@ -60,15 +61,12 @@ let listUsers _ =
         TableColumn "[bold blue]Balance[/]"
     )
     
-    for user in users.Values do
-        table.AddRow(
-            Markup $"[yellow]{user.UserId}[/]",
-            Markup $"[green]{user.Username}[/]",
-            Markup $"[mediumorchid1_1]{user.Items.Count}[/]",
-            user.AccountBalanceMarkup
-        ) |> ignore
-    
-    AnsiConsole.Write table
+    table.AddRows(users.Values, fun user -> [|
+        Markup $"[yellow]{user.UserId}[/]" :> IRenderable
+        Markup $"[green]{user.Username}[/]"
+        Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
+        user.AccountBalanceMarkup
+    |]) |> AnsiConsole.Write
     
 let passValidator =
     let inline err s = ValidationResult.Error s
@@ -79,10 +77,10 @@ let passValidator =
     function
     | p when p |> isNullOrWS     -> err "[red]Password cannot be empty[/]"
     | p when p.Length < 8        -> err "[red]Password must be at least 8 characters[/]"
-    | p when p.any whiteSpace    -> err "[red]Password cannot contain whitespace[/]"
-    | p when p.none Char.IsUpper -> err "[red]Password must contain at least one uppercase letter[/]"
-    | p when p.none Char.IsLower -> err "[red]Password must contain at least one lowercase letter[/]"
-    | p when p.all Char.IsLetter -> err "[red]Password must contain at least one non-letter character[/]"
+    | p when p.Any whiteSpace    -> err "[red]Password cannot contain whitespace[/]"
+    | p when p.None Char.IsUpper -> err "[red]Password must contain at least one uppercase letter[/]"
+    | p when p.None Char.IsLower -> err "[red]Password must contain at least one lowercase letter[/]"
+    | p when p.All Char.IsLetter -> err "[red]Password must contain at least one non-letter character[/]"
     | _                          -> ok()
     
 let addUser _ =
@@ -170,12 +168,9 @@ let listItems (user: User) =
         TableColumn "[bold blue]Price[/]"
     )
     
-    for item in user.Items do
-        table.AddRow(
-            $"[green]{item.Name}[/]", $"[blue]{item.Price:C}[/]"
-        ) |> ignore
-
-    AnsiConsole.Write table
+    table.AddRows(user.Items, fun item -> [|
+        $"[green]{item.Name}[/]"; $"[blue]{item.Price:C}[/]"
+    |]) |> AnsiConsole.Write
     
 let addItem (user: User) =
     let name =
