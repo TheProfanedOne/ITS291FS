@@ -97,7 +97,7 @@ let addUser _ =
         
     let bal =
         let prompt = TextPrompt<decimal> "Enter an initial [blue]balance[/] [dim](Must be positive)[/]:"
-        prompt.Validate((fun b -> b >= 0M), "[red]Balance must be positive[/]") |> ignore
+        ((<=) 0m, "[red]Balance must be positive[/]") |> prompt.Validate |> ignore
         prompt.Show AnsiConsole.Console
     
     users.Add(name, User(name, pass, bal))
@@ -106,7 +106,7 @@ let removeUser _ =
     let name =
         let prompt = SelectionPrompt<string>()
         prompt.Title <- "Select [green]user[/] to remove:"
-        "<cancel>" :: (users.Keys |> Seq.toList) |> prompt.AddChoices |> ignore
+        "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices |> ignore
         prompt.Show AnsiConsole.Console
     
     match name with
@@ -216,7 +216,7 @@ let selGroups = [
 ]
 let SENTINEL = ("Quit", makeTrue >> not)
 
-let rec doMenu (user: User) =
+let rec doMenu user =
     let sel =
         let menu = SelectionPrompt<string * (User -> bool)>()
         menu.Title <- "What would you like to do?"
@@ -226,7 +226,7 @@ let rec doMenu (user: User) =
             
         menu.AddChoices(SENTINEL).UseConverter(fst).Show AnsiConsole.Console |> snd
 
-    if user |> sel then user |> doMenu 
+    if user |> sel then user |> doMenu
     
 [<EntryPoint>]
 let main argv =

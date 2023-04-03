@@ -1,8 +1,15 @@
 module ITS291FS.Extensions
 
+open System
 open System.Runtime.CompilerServices
 open Spectre.Console
 open Spectre.Console.Rendering
+
+// String Extensions
+type String with
+    member this.Any predicate = String.exists predicate this
+    member this.None predicate = predicate |> this.Any |> not
+    member this.All predicate = String.forall predicate this
 
 [<Extension>]
 type Extensions() =
@@ -11,8 +18,3 @@ type Extensions() =
     static member AddRows<'T>(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable[]) =
         rowFun >> table.AddRow >> ignore |> Seq.iter <| rows
         table
-    
-    // String Extensions
-    [<Extension>] static member Any(str: string, predicate) = String.exists predicate str
-    [<Extension>] static member None(str: string, predicate) = predicate |> str.Any |> not
-    [<Extension>] static member All(str: string, predicate) = String.forall predicate str

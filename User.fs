@@ -8,8 +8,8 @@ open System.Security.Cryptography
 open Spectre.Console
 
 let balColor = function
-    | b when b < 0M -> "red"
-    | b when b > 0M -> "green"
+    | b when b < 0m -> "red"
+    | b when b > 0m -> "green"
     | _             -> "yellow"
 
 type Item = { Name: string; Price: decimal; }
@@ -25,7 +25,7 @@ type User(name: string, pass: string, ?bal: decimal) =
     let mutable _name = name
     let mutable _salt = Guid.NewGuid().ToByteArray()
     let mutable _pass = getPassHash _salt pass
-    let mutable _bal = defaultArg bal 0.00M
+    let mutable _bal = defaultArg bal 0.00m
     let _items = List<Item>()
     
     member this.UserId with get() = _userId
@@ -51,11 +51,11 @@ type User(name: string, pass: string, ?bal: decimal) =
     member this.RemoveItem item = _items.Remove item |> ignore
     
     member this.IncrementBalance amount =
-        if amount < 0M then ArgumentException "Amount must be positive" |> raise
+        if amount < 0m then ArgumentException "Amount must be positive" |> raise
         _bal <- _bal + amount
     
     member this.DecrementBalance(amount, ?preventOverdraw) =
-        if amount < 0M then ArgumentException "Amount must be positive" |> raise
+        if amount < 0m then ArgumentException "Amount must be positive" |> raise
         if (defaultArg preventOverdraw true) && amount > _bal then
             BalanceOverdrawEcxeption "Insufficient funds" |> raise
         _bal <- _bal - amount
@@ -77,7 +77,7 @@ type User(name: string, pass: string, ?bal: decimal) =
                 writer.WriteEndObject()
         }
     
-    new (reader: byref<Utf8JsonReader>) as this = User("", "") then
+    new reader as this = User("", "") then
         if reader.TokenType <> JsonTokenType.StartObject then
             JsonException "Expected StartObject token" |> raise
         
