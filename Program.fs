@@ -32,10 +32,9 @@ let saveUsers path =
         opts.WriteIndented <- true
         opts.Converters.Add(User.UserJsonConverter())
         JsonSerializer.Serialize(stream, users.Values |> List.ofSeq, opts)
-        0
     with | :? JsonException as ex ->
         AnsiConsole.MarkupLine $"[red]Error saving users: {ex.Message}[/]"
-        1
+        exit 1
 
 let logon () =
     let user =
@@ -135,8 +134,7 @@ let markupWriteLine: Markup -> unit =
 let incBalance (user: User) =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [green]add[/]?"
-        amtPrompt.Validate(fun amt -> amt >= 0M) |> ignore
-        amtPrompt.ValidationErrorMessage <- "[red]Amount must be positive[/]"
+        ((<=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate |> ignore
         amtPrompt.Show AnsiConsole.Console
     
     AnsiConsole.Markup $"Adding [{balColor amount}]{amount:C}[/] to "
@@ -150,17 +148,16 @@ let incBalance (user: User) =
 let decBalance (user: User) =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [red]remove[/]?"
-        amtPrompt.Validate(fun amt -> amt >= 0M) |> ignore
-        amtPrompt.ValidationErrorMessage <- "[red]Amount must be positive[/]"
+        ((<=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate |> ignore
         amtPrompt.Show AnsiConsole.Console
     
     try
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
-        AnsiConsole.Markup $"Removing [{amount * -1m |> balColor}]{amount:C}[/] from "
+        AnsiConsole.Markup $"Removing [{balColor <| amount * -1m}]{amount:C}[/] from "
         markupWriteLine oldMarkup
     with | :? BalanceOverdrawEcxeption as ex ->
-        AnsiConsole.MarkupLine ex.Message
+        AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
     AnsiConsole.Markup "Account Balance: "
     markupWriteLine user.AccountBalanceMarkup
@@ -185,7 +182,7 @@ let addItem (user: User) =
     
     let price =
         let pricePrompt = TextPrompt<decimal> "What is the [blue]price[/] of the item?"
-        pricePrompt.Validate((fun price -> price >= 0M), "[red]Price must be positive[/]") |> ignore
+        ((<=) 0m, "[red]Price must be positive[/]") |> pricePrompt.Validate |> ignore
         pricePrompt.Show AnsiConsole.Console
     
     user.AddItem name price
@@ -200,7 +197,6 @@ let removeItem (user: User) =
     user.RemoveItem item
 
 let makeTrue _ = true
-
 let selGroups = [
     (("Account", makeTrue), [
         ("Increment Balance", incBalance >> makeTrue)
@@ -230,17 +226,18 @@ let rec doMenu (user: User) =
             
         menu.AddChoices(SENTINEL).UseConverter(fst).Show AnsiConsole.Console |> snd
 
-    match user |> sel with
-    | true -> doMenu user
-    | false -> ()
+    if user |> sel then user |> doMenu 
     
 [<EntryPoint>]
-let main = function
-    | argv when argv.Length <> 1 ->
+let main argv =
+    Console.OutputEncoding <- System.Text.Encoding.UTF8
+    
+    if argv.Length <> 1 then
         printfn "Usage: `dotnet run -- <path to users.json file>`"
-        1
-    | argv ->
-        Console.OutputEncoding <- System.Text.Encoding.UTF8
-        argv[0] |> loadUsers
-        logon() |> doMenu
-        argv[0] |> saveUsers
+        exit 1
+    
+    argv[0] |> loadUsers
+    logon() |> doMenu
+    argv[0] |> saveUsers
+    
+    0

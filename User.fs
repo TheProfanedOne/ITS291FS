@@ -45,8 +45,7 @@ type User(name: string, pass: string, ?bal: decimal) =
     member private this.PassSpan with get() = ReadOnlySpan _pass
     member private this.SaltSpan with get() = ReadOnlySpan _salt
     
-    member this.AccountBalanceMarkup with get() =
-        Markup.FromInterpolated $"[{balColor _bal}]{_bal:C}[/]"
+    member this.AccountBalanceMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
     
     member this.AddItem name price = { Name = name; Price = price; } |> _items.Add
     member this.RemoveItem item = _items.Remove item |> ignore

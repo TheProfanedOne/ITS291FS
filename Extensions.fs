@@ -8,11 +8,11 @@ open Spectre.Console.Rendering
 type Extensions() =
     // Table Extensions
     [<Extension>]
-    static member AddRows(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable[]) =
+    static member AddRows<'T>(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable[]) =
         rowFun >> table.AddRow >> ignore |> Seq.iter <| rows
         table
     
     // String Extensions
-    [<Extension>] static member Any(str: string, pred) = String.exists pred str
-    [<Extension>] static member None(str: string, pred) = pred |> str.Any |> not
-    [<Extension>] static member All(str: string, pred) = String.forall pred str
+    [<Extension>] static member Any(str: string, predicate) = String.exists predicate str
+    [<Extension>] static member None(str: string, predicate) = predicate |> str.Any |> not
+    [<Extension>] static member All(str: string, predicate) = String.forall predicate str
