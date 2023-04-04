@@ -231,6 +231,7 @@ let rec doMenu user =
 [<EntryPoint>]
 let main argv =
     Console.OutputEncoding <- System.Text.Encoding.UTF8
+    Console.CancelKeyPress.Add(fun _ -> printfn "Exiting...")
     
     if argv.Length <> 1 then
         printfn "Usage: `dotnet run -- <path to users.json file>`"
