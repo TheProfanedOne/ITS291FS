@@ -221,9 +221,9 @@ let rec doMenu user =
         let menu = SelectionPrompt<string * (User -> bool)>()
         menu.Title <- "What would you like to do?"
         
-        for group in selGroups do
-            group |> menu.AddChoiceGroup |> ignore
-            
+        // menu.AddChoiceGroup >> ignore |> List.iter <| selGroups
+        selGroups |> List.iter (menu.AddChoiceGroup >> ignore)
+        
         menu.AddChoices(SENTINEL).UseConverter(fst).Show AnsiConsole.Console |> snd
 
     if user |> sel then user |> doMenu

@@ -12,7 +12,7 @@ type String with
     member this.All predicate = String.forall predicate this
 
 [<Extension>]
-type Extensions() =
+type SpectreExtensions() =
     // Table Extensions
     [<Extension>]
     static member AddRows<'T>(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable[]) =
