@@ -15,6 +15,6 @@ type String with
 type SpectreExtensions() =
     // Table Extensions
     [<Extension>]
-    static member AddRows<'T>(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable[]) =
+    static member AddRows<'T>(table: Table, rows: 'T seq, rowFun: 'T -> IRenderable seq) =
         rowFun >> table.AddRow >> ignore |> Seq.iter <| rows
         table

@@ -1,40 +1,112 @@
 ﻿open System
 open System.Collections.Generic
-open System.IO
-open System.Text.Json
 open ITS291FS.User
 open ITS291FS.Extensions
+open Microsoft.Data.Sqlite
 open Spectre.Console
 open Spectre.Console.Rendering
 
 let users = Dictionary<string, User>()
 
 let loadUsers path =
-    use stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Read)
+    let connStrB = SqliteConnectionStringBuilder()
+    connStrB.DataSource <- path
+    connStrB.Mode <- SqliteOpenMode.ReadWrite
+    
     try
-        let jsonList =
-            let opts = JsonSerializerOptions()
-            opts.Converters.Add(User.UserJsonConverter())
-            JsonSerializer.Deserialize<List<User>>(stream, opts)
+        use conn = new SqliteConnection(connStrB.ConnectionString)
+        conn.Open()
         
-        if jsonList |> isNull then JsonException() |> raise
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <- "
+            select u.*, i.name, i.price
+            from users u left join (
+                select * from items union
+                select userid, null, null from users
+            ) i on u.userid = i.userid
+            order by u.userid, name desc
+        "
         
+        use reader = cmd.ExecuteReader()
         users.Clear()
-        for user in jsonList do users.Add(user.Username, user)
-    with | :? JsonException ->
+        while reader.Read() do
+            let user = User reader
+            users.Add(user.Username, user)
+            
+        conn.Close()
+    with | :? SqliteException ->
+        connStrB.Mode <- SqliteOpenMode.ReadWriteCreate
+        use conn = new SqliteConnection(connStrB.ConnectionString)
+        conn.Open()
+        
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <- "
+            create table users (
+                userid primary key not null,
+                username unique not null,
+                salt not null,
+                pass not null,
+                balance not null
+            )
+        "
+        cmd.ExecuteNonQuery() |> ignore
+        
+        cmd.CommandText <- "
+            create table items (
+                userid not null,
+                name not null,
+                price not null,
+                foreign key (userid) references users (userid)
+            )
+        "
+        cmd.ExecuteNonQuery() |> ignore
+        
+        conn.Close()
+        
         users.Clear()
         users.Add("admin", User("admin", "admin"))
 
 let saveUsers path =
-    use stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write)
+    let connStrB = SqliteConnectionStringBuilder()
+    connStrB.DataSource <- path
+    connStrB.Mode <- SqliteOpenMode.ReadWrite
+    
     try
-        let opts = JsonSerializerOptions()
-        opts.WriteIndented <- true
-        opts.Converters.Add(User.UserJsonConverter())
-        JsonSerializer.Serialize(stream, users.Values |> List.ofSeq, opts)
-    with | :? JsonException as ex ->
+        use conn = new SqliteConnection(connStrB.ConnectionString)
+        conn.Open()
+        
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <- "
+            delete from items;
+            delete from users;
+        "
+        cmd.ExecuteNonQuery() |> ignore
+        
+        cmd.CommandText <- "insert into users values (@userid, @username, @salt, @pass, @bal)"
+        cmd.Parameters.Add("@userid", SqliteType.Text) |> ignore
+        cmd.Parameters.Add("@username", SqliteType.Text) |> ignore
+        cmd.Parameters.Add("@salt", SqliteType.Blob) |> ignore
+        cmd.Parameters.Add("@pass", SqliteType.Blob) |> ignore
+        cmd.Parameters.Add("@bal", SqliteType.Real) |> ignore
+
+        for user in users.Values do
+            user.MapDataToCommand cmd
+            cmd.ExecuteNonQuery() |> ignore
+        
+        cmd.CommandText <- "insert into items values (@userid, @name, @price)"
+        cmd.Parameters.Add("@name", SqliteType.Text) |> ignore
+        cmd.Parameters.Add("@price", SqliteType.Real) |> ignore
+        
+        for user in users.Values do
+            cmd.Parameters["@userid"].Value <- user.UserId
+            for item in user.Items do
+                cmd.Parameters["@name"].Value <- item.Name
+                cmd.Parameters["@price"].Value <- item.Price
+                cmd.ExecuteNonQuery() |> ignore
+        
+        conn.Close()
+    with | :? SqliteException as ex ->
         AnsiConsole.MarkupLine $"[red]Error saving users: {ex.Message}[/]"
-        exit 1
 
 let logon () =
     let user =
@@ -60,23 +132,29 @@ let listUsers _ =
         TableColumn "[bold blue]Balance[/]"
     )
     
-    table.AddRows(users.Values, fun user -> [|
+    table.AddRows(users.Values, fun user -> [
         Markup $"[yellow]{user.UserId}[/]" :> IRenderable
         Markup $"[green]{user.Username}[/]"
         Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
         user.AccountBalanceMarkup
-    |]) |> AnsiConsole.Write
+    ]) |> AnsiConsole.Write
     
+let inline err s = ValidationResult.Error s
+let inline ok () = ValidationResult.Success()
+let isNullOrWS = String.IsNullOrWhiteSpace
+
+let nameValidator = function
+    | n when n |> isNullOrWS     -> err "[red]Username cannot be empty[/]"
+    | n when users.ContainsKey n -> err "[red]Username already exists[/]"
+    | _                          -> ok()
+
 let passValidator =
-    let inline err s = ValidationResult.Error s
-    let inline ok () = ValidationResult.Success()
-    let isNullOrWS = String.IsNullOrWhiteSpace
-    let whiteSpace = Char.IsWhiteSpace
+    let isWhiteSpace = Char.IsWhiteSpace
     
     function
     | p when p |> isNullOrWS     -> err "[red]Password cannot be empty[/]"
     | p when p.Length < 8        -> err "[red]Password must be at least 8 characters[/]"
-    | p when p.Any whiteSpace    -> err "[red]Password cannot contain whitespace[/]"
+    | p when p.Any isWhiteSpace  -> err "[red]Password cannot contain whitespace[/]"
     | p when p.None Char.IsUpper -> err "[red]Password must contain at least one uppercase letter[/]"
     | p when p.None Char.IsLower -> err "[red]Password must contain at least one lowercase letter[/]"
     | p when p.All Char.IsLetter -> err "[red]Password must contain at least one non-letter character[/]"
@@ -84,9 +162,8 @@ let passValidator =
     
 let addUser _ =
     let name =
-        let prompt = TextPrompt<string> "Enter [green]username[/]?"
-        users.ContainsKey >> not |> prompt.Validate |> ignore
-        prompt.ValidationErrorMessage <- "[red]Username already exists[/]"
+        let prompt = TextPrompt<string> "Enter [green]username[/]:"
+        prompt.Validator <- nameValidator
         prompt.Show AnsiConsole.Console
         
     let pass =
@@ -168,10 +245,10 @@ let listItems (user: User) =
         TableColumn "[bold blue]Price[/]"
     )
     
-    table.AddRows(user.Items, fun item -> [|
+    table.AddRows(user.Items, fun item -> [
         Markup $"[green]{item.Name}[/]" :> IRenderable
         Markup $"[blue]{item.Price:C}[/]"
-    |]) |> AnsiConsole.Write
+    ]) |> AnsiConsole.Write
     
 let addItem (user: User) =
     let name =
@@ -220,10 +297,7 @@ let rec doMenu user =
     let sel =
         let menu = SelectionPrompt<string * (User -> bool)>()
         menu.Title <- "What would you like to do?"
-        
-        // menu.AddChoiceGroup >> ignore |> List.iter <| selGroups
         selGroups |> List.iter (menu.AddChoiceGroup >> ignore)
-        
         menu.AddChoices(SENTINEL).UseConverter(fst).Show AnsiConsole.Console |> snd
 
     if user |> sel then user |> doMenu

@@ -1,10 +1,10 @@
 module ITS291FS.User
 
 open System
-open System.Text.Json
-open System.Text.Json.Serialization
+open System.Data
 open System.Collections.Generic
 open System.Security.Cryptography
+open Microsoft.Data.Sqlite
 open Spectre.Console
 
 let balColor = function
@@ -28,71 +28,60 @@ type User(name: string, pass: string, ?bal: decimal) =
     let mutable _bal = defaultArg bal 0.00m
     let _items = List<Item>()
     
-    member this.UserId with get() = _userId
-    member this.Username with get() = _name
-    member this.PasswordHash with set value = _pass <- value
-    member this.AccountBalance with get() = _bal
-    member this.Items with get(): IReadOnlyList<Item> = _items
+    member _.UserId with get() = _userId
+    member _.Username with get() = _name
+    member _.PasswordHash with set value = _pass <- value
+    member _.AccountBalance with get() = _bal
+    member _.Items with get(): IReadOnlyList<Item> = _items
 
-    member private this.InitId id = _userId <- id
-    member private this.InitName username = _name <- username
-    member private this.InitBal balance = _bal <- balance
-    member private this.InitSalt salt = _salt <- salt
-    member private this.InitItems items =
+    member private _.InitId id = _userId <- id
+    member private _.InitName username = _name <- username
+    member private _.InitSalt salt = _salt <- salt
+    member private _.InitPass pass = _pass <- pass
+    member private _.InitBal balance = _bal <- balance
+    member private _.InitItems items =
         _items.Clear()
         _items.AddRange items
     
-    member private this.PassSpan with get() = ReadOnlySpan _pass
-    member private this.SaltSpan with get() = ReadOnlySpan _salt
+    member _.AccountBalanceMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
     
-    member this.AccountBalanceMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
+    member _.AddItem name price = { Name = name; Price = price; } |> _items.Add
+    member _.RemoveItem item = _items.Remove item |> ignore
     
-    member this.AddItem name price = { Name = name; Price = price; } |> _items.Add
-    member this.RemoveItem item = _items.Remove item |> ignore
-    
-    member this.IncrementBalance amount =
-        if amount < 0m then ArgumentException "Amount must be positive" |> raise
+    member _.IncrementBalance amount =
+        if amount < 0m then invalidArg "amount" "Amount must be positive"
         _bal <- _bal + amount
     
-    member this.DecrementBalance(amount, ?preventOverdraw) =
-        if amount < 0m then ArgumentException "Amount must be positive" |> raise
+    member _.DecrementBalance(amount, ?preventOverdraw) =
+        if amount < 0m then invalidArg "amount" "Amount must be positive"
         if (defaultArg preventOverdraw true) && amount > _bal then
             BalanceOverdrawEcxeption "Insufficient funds" |> raise
         _bal <- _bal - amount
     
-    member this.CheckPassword pass = getPassHash _salt pass = _pass
+    member _.CheckPassword pass = getPassHash _salt pass = _pass
     
-    static member UserJsonConverter() =
-        { new JsonConverter<User>() with
-            override this.Read(reader, typeToConvert, options) = User &reader
-            override this.Write(writer, value, options) =
-                writer.WriteStartObject()
-                writer.WriteString("userid", value.UserId)
-                writer.WriteString("username", value.Username)
-                writer.WriteBase64String("salt", value.SaltSpan)
-                writer.WriteBase64String("password", value.PassSpan)
-                writer.WriteNumber("balance", value.AccountBalance)
-                writer.WritePropertyName "items"
-                JsonSerializer.Serialize(writer, value.Items)
-                writer.WriteEndObject()
-        }
+    member _.MapDataToCommand (cmd: SqliteCommand) =
+        cmd.Parameters["@userid"].Value <- _userId.ToString()
+        cmd.Parameters["@username"].Value <- _name
+        cmd.Parameters["@salt"].Value <- _salt
+        cmd.Parameters["@pass"].Value <- _pass
+        cmd.Parameters["@bal"].Value <- _bal
     
-    new reader as this = User("", "") then
-        if reader.TokenType <> JsonTokenType.StartObject then
-            JsonException "Expected StartObject token" |> raise
-        
-        while reader.Read() && reader.TokenType <> JsonTokenType.EndObject do
-            if reader.TokenType <> JsonTokenType.PropertyName then
-                JsonException "Expected PropertyName token" |> raise
+    new (reader: IDataReader) as this =
+        User("", "")
+        then
+            reader.GetOrdinal "userid" |> reader.GetGuid |> this.InitId
+            reader.GetOrdinal "username" |> reader.GetString |> this.InitName
+            reader.GetOrdinal "salt" |> reader.GetValue |> unbox |> this.InitSalt
+            reader.GetOrdinal "pass" |> reader.GetValue |> unbox |> this.InitPass
+            reader.GetOrdinal "balance" |> reader.GetDecimal |> this.InitBal
             
-            let pName = reader.GetString()
-            reader.Read() |> ignore
-            match pName with
-            | "userid"   -> reader.GetGuid() |> this.InitId
-            | "username" -> reader.GetString() |> this.InitName
-            | "salt"     -> reader.GetBytesFromBase64() |> this.InitSalt
-            | "password" -> this.PasswordHash <- reader.GetBytesFromBase64()
-            | "balance"  -> reader.GetDecimal() |> this.InitBal
-            | "items"    -> JsonSerializer.Deserialize<List<Item>> &reader |> this.InitItems
-            | _          -> JsonException $"Unexpected property {pName}" |> raise
-        
+            this.InitItems (
+                let items = List<Item>()
+                let nameOrd = reader.GetOrdinal "name"
+                let priceOrd = reader.GetOrdinal "price"
+                while reader.IsDBNull nameOrd |> not do
+                    items.Add { Name = reader.GetString nameOrd; Price = reader.GetDecimal priceOrd; }
+                    reader.Read() |> ignore
+                items
+            )

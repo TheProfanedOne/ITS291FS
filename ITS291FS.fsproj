@@ -9,9 +9,12 @@
         <Compile Include="Extensions.fs" />
         <Compile Include="User.fs" />
         <Compile Include="Program.fs" />
+        <Content Include=".gitignore" />
+        <Content Include="users" />
     </ItemGroup>
 
     <ItemGroup>
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="7.0.4" />
         <PackageReference Include="Spectre.Console" Version="0.46.0" />
     </ItemGroup>
 

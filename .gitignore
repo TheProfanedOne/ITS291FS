@@ -1,5 +1,7 @@
-/**/users.json
+/**/users
 bin
 obj
 .idea
 .vscode
+
+.fake
