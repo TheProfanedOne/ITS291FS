@@ -1,10 +1,21 @@
-﻿open System
-open System.Collections.Generic
+﻿module ITS291FS.Program
+
+open ITS291FS.Utilities
 open ITS291FS.User
-open ITS291FS.Extensions
-open Microsoft.Data.Sqlite
+open type User
+
 open Spectre.Console
 open Spectre.Console.Rendering
+
+open System
+open System.Collections.Generic
+open System.Text.Json
+
+open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Http
+open Microsoft.Data.Sqlite
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 
 let users = Dictionary<string, User>()
 
@@ -17,54 +28,13 @@ let loadUsers path =
         use conn = new SqliteConnection(connStrB.ConnectionString)
         conn.Open()
         
-        use cmd = conn.CreateCommand()
-        cmd.CommandText <- "
-            select u.*, i.name, i.price
-            from users u left join (
-                select * from items union
-                select userid, null, null from users
-            ) i on u.userid = i.userid
-            order by u.userid, name desc
-        "
-        
-        use reader = cmd.ExecuteReader()
-        users.Clear()
-        while reader.Read() do
-            let user = User reader
-            users.Add(user.Username, user)
-            
-        conn.Close()
+        LoadUsersFromDatabase conn users
     with | :? SqliteException ->
         connStrB.Mode <- SqliteOpenMode.ReadWriteCreate
         use conn = new SqliteConnection(connStrB.ConnectionString)
         conn.Open()
         
-        use cmd = conn.CreateCommand()
-        cmd.CommandText <- "
-            create table users (
-                userid primary key not null,
-                username unique not null,
-                salt not null,
-                pass not null,
-                balance not null
-            )
-        "
-        cmd.ExecuteNonQuery() |> ignore
-        
-        cmd.CommandText <- "
-            create table items (
-                userid not null,
-                name not null,
-                price not null,
-                foreign key (userid) references users (userid)
-            )
-        "
-        cmd.ExecuteNonQuery() |> ignore
-        
-        conn.Close()
-        
-        users.Clear()
-        users.Add("admin", User("admin", "admin"))
+        InitDatabaseAndUsers conn users
 
 let saveUsers path =
     let connStrB = SqliteConnectionStringBuilder()
@@ -75,52 +45,22 @@ let saveUsers path =
         use conn = new SqliteConnection(connStrB.ConnectionString)
         conn.Open()
         
-        use cmd = conn.CreateCommand()
-        cmd.CommandText <- "
-            delete from items;
-            delete from users;
-        "
-        cmd.ExecuteNonQuery() |> ignore
-        
-        cmd.CommandText <- "insert into users values (@userid, @username, @salt, @pass, @bal)"
-        cmd.Parameters.Add("@userid", SqliteType.Text) |> ignore
-        cmd.Parameters.Add("@username", SqliteType.Text) |> ignore
-        cmd.Parameters.Add("@salt", SqliteType.Blob) |> ignore
-        cmd.Parameters.Add("@pass", SqliteType.Blob) |> ignore
-        cmd.Parameters.Add("@bal", SqliteType.Real) |> ignore
-
-        for user in users.Values do
-            user.MapDataToCommand cmd
-            cmd.ExecuteNonQuery() |> ignore
-        
-        cmd.CommandText <- "insert into items values (@userid, @name, @price)"
-        cmd.Parameters.Add("@name", SqliteType.Text) |> ignore
-        cmd.Parameters.Add("@price", SqliteType.Real) |> ignore
-        
-        for user in users.Values do
-            cmd.Parameters["@userid"].Value <- user.UserId
-            for item in user.Items do
-                cmd.Parameters["@name"].Value <- item.Name
-                cmd.Parameters["@price"].Value <- item.Price
-                cmd.ExecuteNonQuery() |> ignore
-        
-        conn.Close()
+        SaveUsersToDatabase conn users
     with | :? SqliteException as ex ->
         AnsiConsole.MarkupLine $"[red]Error saving users: {ex.Message}[/]"
 
 let logon () =
     let user =
         let prompt = TextPrompt<User> "[bold green]login[/] ([dim]username[/]):"
-        prompt.AddChoices(users.Values).HideChoices().WithConverter(fun user -> user.Username) |> ignore
-        prompt.InvalidChoiceMessage <- "[red]unknown login[/]"   
-        prompt.Show AnsiConsole.Console
+        prompt.InvalidChoiceMessage <- "[red]unknown login[/]"
+        prompt.AddChoices(users.Values).HideChoices().WithConverter (fun user -> user.Username)
+        |> AnsiConsole.Prompt
     
     let _ =
         let prompt = TextPrompt<string> "Enter [cyan1]password[/]?"
         prompt.Secret().PromptStyle <- "mediumorchid1_1"
-        user.CheckPassword |> prompt.Validate |> ignore
-        prompt.ValidationErrorMessage <- "[red]invalid password[/]"
-        prompt.Show AnsiConsole.Console
+        (user.CheckPassword, "[red]invalid password[/]") |> prompt.Validate
+        |> AnsiConsole.Prompt
     
     user
 
@@ -132,50 +72,53 @@ let listUsers _ =
         TableColumn "[bold blue]Balance[/]"
     )
     
-    table.AddRows(users.Values, fun user -> [
+    table.AddRows users.Values (fun user -> [
         Markup $"[yellow]{user.UserId}[/]" :> IRenderable
         Markup $"[green]{user.Username}[/]"
         Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
         user.AccountBalanceMarkup
     ]) |> AnsiConsole.Write
     
-let inline err s = ValidationResult.Error s
-let inline ok () = ValidationResult.Success()
 let isNullOrWS = String.IsNullOrWhiteSpace
 
-let nameValidator = function
-    | n when n |> isNullOrWS     -> err "[red]Username cannot be empty[/]"
-    | n when users.ContainsKey n -> err "[red]Username already exists[/]"
-    | _                          -> ok()
+let validateName = function
+    | n when n |> isNullOrWS     -> Error "[red]Username cannot be empty[/]"
+    | n when users.ContainsKey n -> Error "[red]Username already exists[/]"
+    | _                          -> Ok ()
 
-let passValidator =
-    let isWhiteSpace = Char.IsWhiteSpace
-    
-    function
-    | p when p |> isNullOrWS     -> err "[red]Password cannot be empty[/]"
-    | p when p.Length < 8        -> err "[red]Password must be at least 8 characters[/]"
-    | p when p.Any isWhiteSpace  -> err "[red]Password cannot contain whitespace[/]"
-    | p when p.None Char.IsUpper -> err "[red]Password must contain at least one uppercase letter[/]"
-    | p when p.None Char.IsLower -> err "[red]Password must contain at least one lowercase letter[/]"
-    | p when p.All Char.IsLetter -> err "[red]Password must contain at least one non-letter character[/]"
-    | _                          -> ok()
+let validatePass = function
+    | p when p |> isNullOrWS         -> Error "[red]Password cannot be empty[/]"
+    | p when p.Length < 8            -> Error "[red]Password must be at least 8 characters[/]"
+    | p when p.Any Char.IsWhiteSpace -> Error "[red]Password cannot contain whitespace[/]"
+    | p when p.None Char.IsUpper     -> Error "[red]Password must contain at least one uppercase letter[/]"
+    | p when p.None Char.IsLower     -> Error "[red]Password must contain at least one lowercase letter[/]"
+    | p when p.All Char.IsLetter     -> Error "[red]Password must contain at least one non-letter character[/]"
+    | _                              -> Ok ()
+
+let nameValidator = validateName >> function
+    | Error msg -> ValidationResult.Error msg
+    | _         -> ValidationResult.Success()
+
+let passValidator = validatePass >> function
+    | Error msg -> ValidationResult.Error msg
+    | _         -> ValidationResult.Success()
     
 let addUser _ =
     let name =
         let prompt = TextPrompt<string> "Enter [green]username[/]:"
         prompt.Validator <- nameValidator
-        prompt.Show AnsiConsole.Console
+        prompt |> AnsiConsole.Prompt
         
     let pass =
         let prompt = TextPrompt<string> "Enter [cyan1]password[/]:"
         prompt.Secret().PromptStyle <- "mediumorchid1_1"
         prompt.Validator <- passValidator
-        prompt.Show AnsiConsole.Console
+        prompt |> AnsiConsole.Prompt
         
     let bal =
         let prompt = TextPrompt<decimal> "Enter an initial [blue]balance[/] [dim](Must be positive)[/]:"
-        ((<=) 0m, "[red]Balance must be positive[/]") |> prompt.Validate |> ignore
-        prompt.Show AnsiConsole.Console
+        prompt.Validate (flip (>=) 0m, "[red]Balance must be positive[/]")
+        |> AnsiConsole.Prompt
     
     users.Add(name, User(name, pass, bal))
     
@@ -183,8 +126,8 @@ let removeUser _ =
     let name =
         let prompt = SelectionPrompt<string>()
         prompt.Title <- "Select [green]user[/] to remove:"
-        "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices |> ignore
-        prompt.Show AnsiConsole.Console
+        "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices
+        |> AnsiConsole.Prompt
     
     match name with
     | "<cancel>" -> ()
@@ -192,52 +135,48 @@ let removeUser _ =
     | n -> users.Remove n |> ignore
     
 let showUserDetails (user: User) =
-        let table = Table().AddColumns(
-            TableColumn "[bold mediumorchid1_1]Property[/]",
-            TableColumn "[bold green]Value[/]"
-        )
-        
-        table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{user.UserId}[/]") |> ignore
-        table.AddRow("[mediumorchid1_1]Name[/]", $"[green]{user.Username}[/]") |> ignore
-        table.AddRow("[mediumorchid1_1]Item Count[/]", $"[green]{user.Items.Count}[/]") |> ignore
-        table.AddRow(
-            Markup "[mediumorchid1_1]Balance[/]",
-            user.AccountBalanceMarkup
-        ) |> AnsiConsole.Write
+    let table = Table().AddColumns(
+        TableColumn "[bold mediumorchid1_1]Property[/]",
+        TableColumn "[bold green]Value[/]"
+    )
+    
+    table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{user.UserId}[/]") |> ignore
+    table.AddRow("[mediumorchid1_1]Name[/]", $"[green]{user.Username}[/]") |> ignore
+    table.AddRow("[mediumorchid1_1]Item Count[/]", $"[green]{user.Items.Count}[/]") |> ignore
+    table.AddRow(
+        Markup "[mediumorchid1_1]Balance[/]",
+        user.AccountBalanceMarkup
+    ) |> AnsiConsole.Write
 
-let markupWriteLine: Markup -> unit =
-    AnsiConsole.Write >> AnsiConsole.WriteLine
+let markupWriteLine str (mark: IRenderable) =
+    AnsiConsole.Markup str
+    AnsiConsole.Write mark
+    AnsiConsole.WriteLine()
 
 let incBalance (user: User) =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [green]add[/]?"
-        ((<=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate |> ignore
-        amtPrompt.Show AnsiConsole.Console
+        (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
+        |> AnsiConsole.Prompt
     
-    AnsiConsole.Markup $"Adding [{balColor amount}]{amount:C}[/] to "
-    markupWriteLine user.AccountBalanceMarkup
-    
+    markupWriteLine $"Adding [{balColor amount}]{amount:C}[/] to " user.AccountBalanceMarkup
     user.IncrementBalance amount
-    
-    AnsiConsole.Markup "New balance: "
-    markupWriteLine user.AccountBalanceMarkup
+    markupWriteLine "Account Balance: " user.AccountBalanceMarkup
 
 let decBalance (user: User) =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [red]remove[/]?"
-        ((<=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate |> ignore
-        amtPrompt.Show AnsiConsole.Console
+        (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
+        |> AnsiConsole.Prompt
     
     try
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
-        AnsiConsole.Markup $"Removing [{balColor <| amount * -1m}]{amount:C}[/] from "
-        markupWriteLine oldMarkup
-    with | :? BalanceOverdrawEcxeption as ex ->
+        markupWriteLine $"Removing [{balColor <| -amount}]{amount:C}[/] from " oldMarkup
+    with | :? BalanceOverdrawException as ex ->
         AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
-    AnsiConsole.Markup "Account Balance: "
-    markupWriteLine user.AccountBalanceMarkup
+    markupWriteLine "Account Balance: " user.AccountBalanceMarkup
         
 let listItems (user: User) =
     let table = Table().AddColumns(
@@ -245,33 +184,31 @@ let listItems (user: User) =
         TableColumn "[bold blue]Price[/]"
     )
     
-    table.AddRows(user.Items, fun item -> [
+    table.AddRows user.Items (fun item -> [
         Markup $"[green]{item.Name}[/]" :> IRenderable
         Markup $"[blue]{item.Price:C}[/]"
     ]) |> AnsiConsole.Write
     
 let addItem (user: User) =
     let name =
-        let namePrompt = TextPrompt<string> "What is the [green]name[/] of the item you wish to add?"
-        String.IsNullOrWhiteSpace >> not |> namePrompt.Validate |> ignore
-        namePrompt.ValidationErrorMessage <- "[red]Name cannot be empty[/]"
-        namePrompt.Show AnsiConsole.Console
-    
+        let prompt = TextPrompt<string> "What is the [green]name[/] of the item you wish to add?"
+        (isNullOrWS >> not, "[red]Name cannot be empty[/]") |> prompt.Validate
+        |> AnsiConsole.Prompt
+
     let price =
-        let pricePrompt = TextPrompt<decimal> "What is the [blue]price[/] of the item?"
-        ((<=) 0m, "[red]Price must be positive[/]") |> pricePrompt.Validate |> ignore
-        pricePrompt.Show AnsiConsole.Console
+        let prompt = TextPrompt<decimal> "What is the [blue]price[/] of the item?"
+        (flip (>=) 0m, "[red]Price must be positive[/]") |> prompt.Validate
+        |> AnsiConsole.Prompt
     
     user.AddItem name price
     
 let removeItem (user: User) =
-    let item =
-        let itemPrompt = SelectionPrompt<Item>()
-        itemPrompt.Title <- "What is the [green]name[/] of the item you wish to remove?"
-        itemPrompt.AddChoices(user.Items).UseConverter(fun item -> item.Name) |> ignore
-        itemPrompt.Show AnsiConsole.Console
-    
-    user.RemoveItem item
+    user.RemoveItem (
+        let prompt = SelectionPrompt<Item>()
+        prompt.Title <- "What is the [green]name[/] of the item you wish to remove?"
+        prompt.AddChoices(user.Items).UseConverter(fun item -> item.Name)
+        |> AnsiConsole.Prompt
+    )
 
 let makeTrue _ = true
 let selGroups = [
@@ -298,21 +235,91 @@ let rec doMenu user =
         let menu = SelectionPrompt<string * (User -> bool)>()
         menu.Title <- "What would you like to do?"
         selGroups |> List.iter (menu.AddChoiceGroup >> ignore)
-        menu.AddChoices(SENTINEL).UseConverter(fst).Show AnsiConsole.Console |> snd
+        menu.AddChoices(SENTINEL).UseConverter(fst)
+        |> AnsiConsole.Prompt |> snd
 
-    if user |> sel then user |> doMenu
+    if sel user then doMenu user
+
+let startWebApi (argv: string[]) =
+    let builder = WebApplication.CreateBuilder argv
+    
+    builder.Services.AddEndpointsApiExplorer() |> ignore
+    builder.Services.AddSwaggerGen() |> ignore
+    
+    let app = builder.Build()
+    
+    app.UseSwagger() |> ignore
+    app.UseSwaggerUI() |> ignore
+    
+    app.UseHttpsRedirection() |> ignore
+    
+    let serializerOptions = JsonSerializerOptions.Default
+    let getUsers () = Results.Json(users.Values |> Seq.map ToShortUser, serializerOptions)
+    let postUser body = (validateName body.username, validatePass body.password) |> function
+        | Error msg, _ | _, Error msg -> Results.BadRequest msg
+        | _ when body.account_balance < 0m -> Results.BadRequest "Account balance cannot be negative"
+        | _ -> users.Add(body.username, User body) |> Results.NoContent
+    let deleteUser username = users.Remove username |> function
+        | true -> Results.NoContent()
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    let getUser username = users.TryGetValue username |> function
+        | true, user -> Results.Json(user.LongUser, serializerOptions)
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    let putUser username op amount = users.TryGetValue username |> function
+        | true, _ when amount < 0m -> Results.BadRequest "Amount cannot be negative"
+        | true, user -> op |> function
+            | "inc" -> user.IncrementBalance amount |> Results.NoContent
+            | "dec" ->
+                try user.DecrementBalance amount |> Results.NoContent
+                with | :? BalanceOverdrawException as ex -> Results.BadRequest ex.Message
+            | _ -> Results.BadRequest $"Invalid operation: `{op}`"
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    let getItems username = users.TryGetValue username |> function
+        | true, user -> Results.Json(user.Items |> Seq.map ToItemJson, serializerOptions)
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    let postItem username body = users.TryGetValue username |> function
+        | true, _ when body.name |> isNullOrWS -> Results.BadRequest "Name cannot be empty"
+        | true, _ when body.price <= 0m -> Results.BadRequest "Price cannot be negative"
+        | true, user -> body |> user.AddItemPost |> Results.NoContent
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    let deleteItem username name = users.TryGetValue username |> function
+        | true, user ->
+            try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem |> Results.NoContent
+            with | :? KeyNotFoundException -> Results.NotFound $"Unknown item: `{name}`"
+        | _ -> Results.NotFound $"Unknown user: `{username}`"
+    
+    app.MapGet("/users", Func<_>(getUsers)) |> ignore
+    app.MapPost("/users", Func<_, _>(postUser)) |> ignore
+    app.MapDelete("/{username}", Func<_, _>(deleteUser)) |> ignore
+    app.MapGet("/{username}", Func<_, _>(getUser)) |> ignore
+    app.MapPut("/{username}/accountBalance", Func<_, _, _, _>(putUser)) |> ignore
+    app.MapGet("/{username}/items", Func<_, _>(getItems)) |> ignore
+    app.MapPost("/{username}/items", Func<_, _, _>(postItem)) |> ignore
+    app.MapDelete("/{username}/items/{name}", Func<_, _, _>(deleteItem)) |> ignore
+    
+    app.RunAsync "https://localhost:5000" |> ignore    
+    app
     
 [<EntryPoint>]
 let main argv =
     Console.OutputEncoding <- System.Text.Encoding.UTF8
-    Console.CancelKeyPress.Add(fun _ -> printfn "Exiting...")
     
     if argv.Length <> 1 then
         printfn "Usage: `dotnet run -- <path to users.json file>`"
         exit 1
     
     argv[0] |> loadUsers
+    let app = startWebApi argv
+    
+    Console.CancelKeyPress.Add(fun _ ->
+        AnsiConsole.WriteLine()
+        if ConfirmationPrompt "Do you want to save what you have?" |> AnsiConsole.Prompt then
+            argv[0] |> saveUsers
+    )
+    
     logon() |> doMenu
     argv[0] |> saveUsers
+    
+    app.StopAsync().Wait()
     
     0

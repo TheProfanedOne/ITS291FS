@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -6,15 +6,17 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="Extensions.fs" />
+        <Content Include=".gitignore" />
+        <Content Include="users.sqlite3" />
+        <Compile Include="Utilities.fs" />
         <Compile Include="User.fs" />
         <Compile Include="Program.fs" />
-        <Content Include=".gitignore" />
-        <Content Include="users" />
     </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Data.Sqlite" Version="7.0.4" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.4" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
         <PackageReference Include="Spectre.Console" Version="0.46.0" />
     </ItemGroup>
 
