@@ -19,7 +19,7 @@ exception BalanceOverdrawException of string
 [<CLIMutable>] type UserPost = { username: string; password: string; account_balance: decimal }
 type User(name: string, pass: string, ?bal: decimal) =
     let getPassHash (salt: byte[]) (pass: string) =
-        let pBytes = System.Text.Encoding.UTF8.GetBytes pass in
+        let pBytes = System.Text.Encoding.UTF8.GetBytes pass
         SHA256.HashData salt |> Array.append pBytes |> SHA256.HashData |> Array.append salt |> SHA256.HashData
     
     let mutable _userId = Guid.NewGuid()
