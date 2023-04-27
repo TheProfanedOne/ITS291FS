@@ -4,6 +4,7 @@ open Giraffe
 
 open ITS291FS.Utilities
 open ITS291FS.User
+open Swashbuckle.AspNetCore.SwaggerUI
 open type User
 
 open Spectre.Console
@@ -339,13 +340,14 @@ let startWebApi (argv: string array) =
     let configureServices (services: IServiceCollection) =
         services.AddGiraffe() |> ignore
     
+    let configureSwagger (opts: SwaggerUIOptions) =
+        opts.SwaggerEndpoint("/swagger/v1/swagger.json", "v1")
+    
     let configureApp (app: IApplicationBuilder) =
         app.UseGiraffe webApp
         app.UseStaticFiles() |> ignore
         app.UseHttpsRedirection() |> ignore
-        app.UseSwaggerUI (fun opts ->
-            opts.SwaggerEndpoint("/swagger/v1/swagger.json", "v1")
-        ) |> ignore
+        app.UseSwaggerUI configureSwagger |> ignore
     
     let app =
         let builder = WebApplication.CreateBuilder(argv)
