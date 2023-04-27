@@ -13,10 +13,10 @@ let balColor = function
     | _             -> "yellow"
 
 [<IsReadOnly; Struct>] type Item = { Name: string; Price: decimal; }
-[<IsReadOnly; Struct>] type ItemPost = { name: string; price: decimal }
+[<CLIMutable>] type ItemPost = { name: string; price: decimal }
 exception BalanceOverdrawException of string
 
-[<IsReadOnly; Struct>] type UserPost = { username: string; password: string; account_balance: decimal }
+[<CLIMutable>] type UserPost = { username: string; password: string; account_balance: decimal }
 type User(name: string, pass: string, ?bal: decimal) =
     let getPassHash (salt: byte[]) (pass: string) =
         let pBytes = System.Text.Encoding.UTF8.GetBytes pass in

@@ -1,5 +1,7 @@
 ﻿module ITS291FS.Program
 
+open Giraffe
+
 open ITS291FS.Utilities
 open ITS291FS.User
 open type User
@@ -9,10 +11,8 @@ open Spectre.Console.Rendering
 
 open System
 open System.Collections.Generic
-open System.Text.Json
 
 open Microsoft.AspNetCore.Builder
-open Microsoft.AspNetCore.Http
 open Microsoft.Data.Sqlite
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
@@ -172,7 +172,7 @@ let decBalance (user: User) =
     try
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
-        markupWriteLine $"Removing [{balColor <| -amount}]{amount:C}[/] from " oldMarkup
+        markupWriteLine $"Removing [{balColor -amount}]{amount:C}[/] from " oldMarkup
     with | :? BalanceOverdrawException as ex ->
         AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
@@ -240,66 +240,122 @@ let rec doMenu user =
 
     if sel user then doMenu user
 
-let startWebApi (argv: string[]) =
-    let builder = WebApplication.CreateBuilder argv
+let startWebApi (argv: string array) =
+    let getUsersList =
+        route "/users/list" >=> Successful.ok (warbler (fun _ ->
+        users.Values |> Seq.map ToShortUser |> json
+    ))
+        
+    let postUser = route "/users" >=> warbler (fun _ -> fun next ctx -> task {
+        let! body = ctx.BindJsonAsync<UserPost>()
+        let { username = un; password = pass; account_balance = bal } = body
+        
+        let status =
+            match validateName un, validatePass pass with
+            | Error msg, _ | _, Error msg -> RequestErrors.BAD_REQUEST msg
+            | _ when bal < 0m -> RequestErrors.BAD_REQUEST "Account balance cannot be negative"
+            | _ -> users.Add(un, User body); Successful.NO_CONTENT
+        
+        return! status next ctx
+    })
+        
+    let deleteUser = routef "/%s" (fun username -> warbler (fun _ ->
+        match users.Remove username with
+        | true -> Successful.NO_CONTENT
+        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+    ))
     
-    builder.Services.AddEndpointsApiExplorer() |> ignore
-    builder.Services.AddSwaggerGen() |> ignore
-    
-    let app = builder.Build()
-    
-    app.UseSwagger() |> ignore
-    app.UseSwaggerUI() |> ignore
-    
-    app.UseHttpsRedirection() |> ignore
-    
-    let serializerOptions = JsonSerializerOptions.Default
-    let getUsers () = Results.Json(users.Values |> Seq.map ToShortUser, serializerOptions)
-    let postUser body = (validateName body.username, validatePass body.password) |> function
-        | Error msg, _ | _, Error msg -> Results.BadRequest msg
-        | _ when body.account_balance < 0m -> Results.BadRequest "Account balance cannot be negative"
-        | _ -> users.Add(body.username, User body) |> Results.NoContent
-    let deleteUser username = users.Remove username |> function
-        | true -> Results.NoContent()
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
-    let getUser username = users.TryGetValue username |> function
-        | true, user -> Results.Json(user.LongUser, serializerOptions)
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
-    let putUser username op amount = users.TryGetValue username |> function
-        | true, _ when amount < 0m -> Results.BadRequest "Amount cannot be negative"
-        | true, user -> op |> function
-            | "inc" -> user.IncrementBalance amount |> Results.NoContent
-            | "dec" ->
-                try user.DecrementBalance amount |> Results.NoContent
-                with | :? BalanceOverdrawException as ex -> Results.BadRequest ex.Message
-            | _ -> Results.BadRequest $"Invalid operation: `{op}`"
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
-    let getItems username = users.TryGetValue username |> function
-        | true, user -> Results.Json(user.Items |> Seq.map ToItemJson, serializerOptions)
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
-    let postItem username body = users.TryGetValue username |> function
-        | true, _ when body.name |> isNullOrWS -> Results.BadRequest "Name cannot be empty"
-        | true, _ when body.price <= 0m -> Results.BadRequest "Price cannot be negative"
-        | true, user -> body |> user.AddItemPost |> Results.NoContent
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
-    let deleteItem username name = users.TryGetValue username |> function
+    let getUser = routef "/%s" (fun username -> warbler (fun _ ->
+        match users.TryGetValue username with
+        | true, user -> Successful.ok (json user.LongUser)
+        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+    ))
+        
+    let putUser = routef "/%s" (fun username -> warbler (fun _ -> fun next ctx ->
+        let { op = op; amount = amt } = ctx.BindQueryString<PutQuery>()
+        
+        let status =
+            match users.TryGetValue username with
+            | true, _ when amt < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
+            | true, user ->
+                match op with
+                | "inc" -> user.IncrementBalance amt; Successful.NO_CONTENT
+                | "dec" ->
+                    try user.DecrementBalance amt; Successful.NO_CONTENT
+                    with | :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
+                | _ -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
+            | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+            
+        status next ctx
+    ))
+        
+    let getItems = routef "/%s/items" (fun username -> warbler (fun _ ->
+        match users.TryGetValue username with
+        | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
+        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+    ))
+        
+    let postItem = routef "/%s/items" (fun username -> warbler (fun _ -> fun next ctx -> task {
+        let! { name = name; price = price } = ctx.BindJsonAsync<ItemPost>()
+        
+        let status =
+            match users.TryGetValue username with
+            | true, _ when name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
+            | true, _ when price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
+            | true, user -> user.AddItem name price; Successful.NO_CONTENT
+            | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+            
+        return! status next ctx
+    }))
+        
+    let deleteItem = routef "/%s/items/%s" (fun (username, name) -> warbler (fun _ ->
+        match users.TryGetValue username with
         | true, user ->
-            try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem |> Results.NoContent
-            with | :? KeyNotFoundException -> Results.NotFound $"Unknown item: `{name}`"
-        | _ -> Results.NotFound $"Unknown user: `{username}`"
+            try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
+            with | :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
+        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+    ))
     
-    app.MapGet("/users", Func<_>(getUsers)) |> ignore
-    app.MapPost("/users", Func<_, _>(postUser)) |> ignore
-    app.MapDelete("/{username}", Func<_, _>(deleteUser)) |> ignore
-    app.MapGet("/{username}", Func<_, _>(getUser)) |> ignore
-    app.MapPut("/{username}/accountBalance", Func<_, _, _, _>(putUser)) |> ignore
-    app.MapGet("/{username}/items", Func<_, _>(getItems)) |> ignore
-    app.MapPost("/{username}/items", Func<_, _, _>(postItem)) |> ignore
-    app.MapDelete("/{username}/items/{name}", Func<_, _, _>(deleteItem)) |> ignore
+    let webApp = choose [
+        route "/" >=> Successful.OK "Nothing to see here"
+        route "/index.html" >=> redirectTo false "/"
+        route "/swagger" >=> redirectTo false "/swagger/index.html"
+        GET >=> choose [
+            getUsersList
+            getUser
+            getItems
+        ]
+        POST >=> choose [
+            postUser
+            postItem
+        ]
+        DELETE >=> choose [
+            deleteUser
+            deleteItem
+        ]
+        PUT >=> putUser
+    ]
     
-    app.RunAsync "https://localhost:5000" |> ignore    
+    let configureServices (services: IServiceCollection) =
+        services.AddGiraffe() |> ignore
+    
+    let configureApp (app: IApplicationBuilder) =
+        app.UseGiraffe webApp
+        app.UseStaticFiles() |> ignore
+        app.UseHttpsRedirection() |> ignore
+        app.UseSwaggerUI (fun opts ->
+            opts.SwaggerEndpoint("/swagger/v1/swagger.json", "v1")
+        ) |> ignore
+    
+    let app =
+        let builder = WebApplication.CreateBuilder(argv)
+        configureServices builder.Services
+        builder.Build()
+    
+    configureApp app
+    app.RunAsync "https://localhost:5000" |> ignore
     app
-    
+
 [<EntryPoint>]
 let main argv =
     Console.OutputEncoding <- System.Text.Encoding.UTF8
@@ -315,6 +371,7 @@ let main argv =
         AnsiConsole.WriteLine()
         if ConfirmationPrompt "Do you want to save what you have?" |> AnsiConsole.Prompt then
             argv[0] |> saveUsers
+        app.StopAsync().Wait()
     )
     
     logon() |> doMenu
