@@ -40,7 +40,7 @@ type User(name: string, pass: string, ?bal: decimal) =
     member _.LongUser with get() =
         {| user_id = _userId; username = _name; account_balance = _bal; item_count = _items.Count |}
     static member ToItemJson (item: Item) = {| name = item.Name; price = item.Price |}
-
+    
     member private _.InitId id = _userId <- id
     member private _.InitName username = _name <- username
     member private _.InitSalt salt = _salt <- salt
@@ -84,7 +84,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         while reader.Read() do
             let user = User reader
             users.Add(user.Username, user)
-            
+    
     static member InitDatabaseAndUsers (conn: SqliteConnection) (users: Dictionary<string, User>) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "
@@ -110,7 +110,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         
         users.Clear()
         users.Add("admin", User("admin", "admin"))
-        
+    
     static member SaveUsersToDatabase (conn: SqliteConnection) (users: Dictionary<string, User>) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "
@@ -127,7 +127,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         cmd.Parameters.Add("@salt", SqliteType.Blob) |> ignore
         cmd.Parameters.Add("@pass", SqliteType.Blob) |> ignore
         cmd.Parameters.Add("@bal", SqliteType.Real) |> ignore
-
+        
         for user in users.Values do
             user.MapDataToCommand cmd.Parameters
             cmd.ExecuteNonQuery() |> ignore
@@ -170,5 +170,5 @@ type User(name: string, pass: string, ?bal: decimal) =
                     reader.Read() |> ignore
                 items
             )
-
+    
     new (user: UserPost) = User(user.username, user.password, user.account_balance)

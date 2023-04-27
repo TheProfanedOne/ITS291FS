@@ -1,23 +1,18 @@
 ﻿module ITS291FS.Program
 
 open Giraffe
-
 open ITS291FS.Utilities
 open ITS291FS.User
 open ITS291FS.SwaggerJson
 open type User
-
 open Spectre.Console
 open Spectre.Console.Rendering
-
 open System
 open System.Collections.Generic
-
 open Microsoft.AspNetCore.Builder
 open Microsoft.Data.Sqlite
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
-
 open Swashbuckle.AspNetCore.SwaggerUI
 
 let users = Dictionary<string, User>()
@@ -81,7 +76,7 @@ let listUsers _ =
         Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
         user.AccountBalanceMarkup
     ]) |> AnsiConsole.Write
-    
+
 let isNullOrWS = String.IsNullOrWhiteSpace
 
 let validateName = function
@@ -105,26 +100,26 @@ let nameValidator = validateName >> function
 let passValidator = validatePass >> function
     | Error msg -> ValidationResult.Error $"[red]{msg}[/]"
     | _         -> ValidationResult.Success()
-    
+
 let addUser _ =
     let name =
         let prompt = TextPrompt<string> "Enter [green]username[/]:"
         prompt.Validator <- nameValidator
         prompt |> AnsiConsole.Prompt
-        
+    
     let pass =
         let prompt = TextPrompt<string> "Enter [cyan1]password[/]:"
         prompt.Secret().PromptStyle <- "mediumorchid1_1"
         prompt.Validator <- passValidator
         prompt |> AnsiConsole.Prompt
-        
+    
     let bal =
         let prompt = TextPrompt<decimal> "Enter an initial [blue]balance[/] [dim](Must be positive)[/]:"
         prompt.Validate (flip (>=) 0m, "[red]Balance must be positive[/]")
         |> AnsiConsole.Prompt
     
     users.Add(name, User(name, pass, bal))
-    
+
 let removeUser _ =
     let name =
         let prompt = SelectionPrompt<string>()
@@ -136,7 +131,7 @@ let removeUser _ =
     | "<cancel>" -> ()
     | "admin" -> AnsiConsole.MarkupLine "[red]Cannot remove admin user[/]"
     | n -> users.Remove n |> ignore
-    
+
 let showUserDetails (user: User) =
     let table = Table().AddColumns(
         TableColumn "[bold mediumorchid1_1]Property[/]",
@@ -180,7 +175,7 @@ let decBalance (user: User) =
         AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
     markupWriteLine "Account Balance: " user.AccountBalanceMarkup
-        
+
 let listItems (user: User) =
     let table = Table().AddColumns(
         TableColumn "[bold green]Name[/]",
@@ -191,20 +186,20 @@ let listItems (user: User) =
         Markup $"[green]{item.Name}[/]" :> IRenderable
         Markup $"[blue]{item.Price:C}[/]"
     ]) |> AnsiConsole.Write
-    
+
 let addItem (user: User) =
     let name =
         let prompt = TextPrompt<string> "What is the [green]name[/] of the item you wish to add?"
         (isNullOrWS >> not, "[red]Name cannot be empty[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
-
+    
     let price =
         let prompt = TextPrompt<decimal> "What is the [blue]price[/] of the item?"
         (flip (>=) 0m, "[red]Price must be positive[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
     
     user.AddItem name price
-    
+
 let removeItem (user: User) =
     user.RemoveItem (
         let prompt = SelectionPrompt<Item>()
@@ -240,7 +235,7 @@ let rec doMenu user =
         selGroups |> List.iter (menu.AddChoiceGroup >> ignore)
         menu.AddChoices(SENTINEL).UseConverter(fst)
         |> AnsiConsole.Prompt |> snd
-
+    
     if sel user then doMenu user
 
 let startWebApi (argv: string array) =
@@ -373,7 +368,7 @@ let main argv =
     Console.OutputEncoding <- System.Text.Encoding.UTF8
     
     if argv.Length <> 1 then
-        printfn "Usage: `dotnet run -- <path to users.json file>`"
+        printfn "Usage: `ITS291FS <path to database file>`"
         exit 1
     
     argv[0] |> loadUsers
