@@ -1,9 +1,11 @@
 ﻿module ITS291FS.Program
 
+open System.Text.Json
 open Giraffe
 
 open ITS291FS.Utilities
 open ITS291FS.User
+open ITS291FS.SwaggerJson
 open Swashbuckle.AspNetCore.SwaggerUI
 open type User
 
@@ -242,11 +244,15 @@ let rec doMenu user =
     if sel user then doMenu user
 
 let startWebApi (argv: string array) =
-    let getUsersList =
-        route "/users/list" >=> Successful.ok (warbler (fun _ ->
+    let swaggerRoute =
+        route "/swagger/v1/swagger.json"
+        >=> setContentType "application/json"
+        >=> setBodyFromString swaggerJson
+    
+    let getUsers = route "/users/list" >=> Successful.ok (warbler (fun _ ->
         users.Values |> Seq.map ToShortUser |> json
     ))
-        
+    
     let postUser = route "/users" >=> warbler (fun _ -> fun next ctx -> task {
         let! body = ctx.BindJsonAsync<UserPost>()
         let { username = un; password = pass; account_balance = bal } = body
@@ -259,8 +265,8 @@ let startWebApi (argv: string array) =
         
         return! status next ctx
     })
-        
-    let deleteUser = routef "/%s" (fun username -> warbler (fun _ ->
+    
+    let delUser = routef "/%s" (fun username -> warbler (fun _ ->
         match users.Remove username with
         | true -> Successful.NO_CONTENT
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
@@ -271,8 +277,8 @@ let startWebApi (argv: string array) =
         | true, user -> Successful.ok (json user.LongUser)
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
     ))
-        
-    let putUser = routef "/%s" (fun username -> warbler (fun _ -> fun next ctx ->
+    
+    let putUser = routef "/%s/accountBalance" (fun username -> warbler (fun _ -> fun next ctx ->
         let { op = op; amount = amt } = ctx.BindQueryString<PutQuery>()
         
         let status =
@@ -286,16 +292,16 @@ let startWebApi (argv: string array) =
                     with | :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
                 | _ -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-            
+        
         status next ctx
     ))
-        
+    
     let getItems = routef "/%s/items" (fun username -> warbler (fun _ ->
         match users.TryGetValue username with
         | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
     ))
-        
+    
     let postItem = routef "/%s/items" (fun username -> warbler (fun _ -> fun next ctx -> task {
         let! { name = name; price = price } = ctx.BindJsonAsync<ItemPost>()
         
@@ -305,11 +311,11 @@ let startWebApi (argv: string array) =
             | true, _ when price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
             | true, user -> user.AddItem name price; Successful.NO_CONTENT
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-            
+        
         return! status next ctx
     }))
-        
-    let deleteItem = routef "/%s/items/%s" (fun (username, name) -> warbler (fun _ ->
+    
+    let delItem = routef "/%s/items/%s" (fun (username, name) -> warbler (fun _ ->
         match users.TryGetValue username with
         | true, user ->
             try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
@@ -318,11 +324,12 @@ let startWebApi (argv: string array) =
     ))
     
     let webApp = choose [
-        route "/" >=> Successful.OK "Nothing to see here"
+        route "/" >=> redirectTo false "/swagger/index.html"
         route "/index.html" >=> redirectTo false "/"
-        route "/swagger" >=> redirectTo false "/swagger/index.html"
+        route "/swagger" >=> redirectTo false "/"
         GET >=> choose [
-            getUsersList
+            swaggerRoute
+            getUsers
             getUser
             getItems
         ]
@@ -331,8 +338,8 @@ let startWebApi (argv: string array) =
             postItem
         ]
         DELETE >=> choose [
-            deleteUser
-            deleteItem
+            delUser
+            delItem
         ]
         PUT >=> putUser
     ]
@@ -345,7 +352,7 @@ let startWebApi (argv: string array) =
     
     let configureApp (app: IApplicationBuilder) =
         app.UseGiraffe webApp
-        app.UseStaticFiles() |> ignore
+        // app.UseStaticFiles() |> ignore
         app.UseHttpsRedirection() |> ignore
         app.UseSwaggerUI configureSwagger |> ignore
     
