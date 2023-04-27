@@ -83,25 +83,25 @@ let listUsers _ =
 let isNullOrWS = String.IsNullOrWhiteSpace
 
 let validateName = function
-    | n when n |> isNullOrWS     -> Error "[red]Username cannot be empty[/]"
-    | n when users.ContainsKey n -> Error "[red]Username already exists[/]"
+    | n when n |> isNullOrWS     -> Error "Username cannot be empty"
+    | n when users.ContainsKey n -> Error "Username already exists"
     | _                          -> Ok ()
 
 let validatePass = function
-    | p when p |> isNullOrWS         -> Error "[red]Password cannot be empty[/]"
-    | p when p.Length < 8            -> Error "[red]Password must be at least 8 characters[/]"
-    | p when p.Any Char.IsWhiteSpace -> Error "[red]Password cannot contain whitespace[/]"
-    | p when p.None Char.IsUpper     -> Error "[red]Password must contain at least one uppercase letter[/]"
-    | p when p.None Char.IsLower     -> Error "[red]Password must contain at least one lowercase letter[/]"
-    | p when p.All Char.IsLetter     -> Error "[red]Password must contain at least one non-letter character[/]"
+    | p when p |> isNullOrWS         -> Error "Password cannot be empty"
+    | p when p.Length < 8            -> Error "Password must be at least 8 characters"
+    | p when p.Any Char.IsWhiteSpace -> Error "Password cannot contain whitespace"
+    | p when p.None Char.IsUpper     -> Error "Password must contain at least one uppercase letter"
+    | p when p.None Char.IsLower     -> Error "Password must contain at least one lowercase letter"
+    | p when p.All Char.IsLetter     -> Error "Password must contain at least one non-letter character"
     | _                              -> Ok ()
 
 let nameValidator = validateName >> function
-    | Error msg -> ValidationResult.Error msg
+    | Error msg -> ValidationResult.Error $"[red]{msg}[/]"
     | _         -> ValidationResult.Success()
 
 let passValidator = validatePass >> function
-    | Error msg -> ValidationResult.Error msg
+    | Error msg -> ValidationResult.Error $"[red]{msg}[/]"
     | _         -> ValidationResult.Success()
     
 let addUser _ =
