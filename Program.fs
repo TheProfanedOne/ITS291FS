@@ -1,12 +1,10 @@
 ﻿module ITS291FS.Program
 
-open System.Text.Json
 open Giraffe
 
 open ITS291FS.Utilities
 open ITS291FS.User
 open ITS291FS.SwaggerJson
-open Swashbuckle.AspNetCore.SwaggerUI
 open type User
 
 open Spectre.Console
@@ -19,6 +17,8 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.Data.Sqlite
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
+
+open Swashbuckle.AspNetCore.SwaggerUI
 
 let users = Dictionary<string, User>()
 
@@ -244,6 +244,12 @@ let rec doMenu user =
     if sel user then doMenu user
 
 let startWebApi (argv: string array) =
+    let redirects = choose [
+        route "/" >=> redirectTo true "/swagger/index.html"
+        route "/index.html" >=> redirectTo true "/"
+        route "/swagger" >=> redirectTo true "/"
+    ]
+    
     let swaggerRoute =
         route "/swagger/v1/swagger.json"
         >=> setContentType "application/json"
@@ -324,9 +330,7 @@ let startWebApi (argv: string array) =
     ))
     
     let webApp = choose [
-        route "/" >=> redirectTo false "/swagger/index.html"
-        route "/index.html" >=> redirectTo false "/"
-        route "/swagger" >=> redirectTo false "/"
+        redirects
         GET >=> choose [
             swaggerRoute
             getUsers

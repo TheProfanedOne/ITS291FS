@@ -4,8 +4,6 @@ open System
 open Spectre.Console
 open Spectre.Console.Rendering
 
-[<CLIMutable>] type OneArg = { username: string }
-[<CLIMutable>] type TwoArgs = { username: string; name: string }
 [<CLIMutable>] type PutQuery = { op: string; amount: decimal }
 
 let flip f x y = f y x
