@@ -352,7 +352,6 @@ let startWebApi (argv: string array) =
     
     let configureApp (app: IApplicationBuilder) =
         app.UseGiraffe webApp
-        // app.UseStaticFiles() |> ignore
         app.UseHttpsRedirection() |> ignore
         app.UseSwaggerUI configureSwagger |> ignore
     
