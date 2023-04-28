@@ -3,19 +3,17 @@
 open Giraffe
 open ITS291FS.Utilities
 open ITS291FS.User
+open type User
 open ITS291FS.SwaggerJson
 open Microsoft.AspNetCore.Hosting
 open Microsoft.Extensions.Hosting
-open type User
 open Spectre.Console
 open Spectre.Console.Rendering
 open System
 open System.Collections.Generic
 open Microsoft.AspNetCore.Builder
 open Microsoft.Data.Sqlite
-open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
-open Swashbuckle.AspNetCore.SwaggerUI
 
 let users = Dictionary<string, User>()
 
@@ -76,7 +74,7 @@ let listUsers _ =
         Markup $"[yellow]{user.UserId}[/]" :> IRenderable
         Markup $"[green]{user.Username}[/]"
         Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
-        user.AccountBalanceMarkup
+        AccountBalanceMarkup user
     ]) |> AnsiConsole.Write
 
 let isNullOrWS = String.IsNullOrWhiteSpace
@@ -131,18 +129,18 @@ let removeUser _ =
     | "admin" -> AnsiConsole.MarkupLine "[red]Cannot remove admin user[/]"
     | n -> users.Remove n |> ignore
 
-let showUserDetails (user: User) =
+let showUserDetails user =
     let table = Table().AddColumns (
         TableColumn "[bold mediumorchid1_1]Property[/]",
         TableColumn "[bold green]Value[/]"
     )
     
-    table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{user.UserId}[/]") |> ignore
+    table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{GetId user}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Name[/]", $"[green]{user.Username}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Item Count[/]", $"[green]{user.Items.Count}[/]") |> ignore
     table.AddRow (
         Markup "[mediumorchid1_1]Balance[/]",
-        user.AccountBalanceMarkup
+        AccountBalanceMarkup user
     ) |> AnsiConsole.Write
 
 let markupWriteLine str (mark: IRenderable) =
@@ -150,43 +148,43 @@ let markupWriteLine str (mark: IRenderable) =
     AnsiConsole.Write mark
     AnsiConsole.WriteLine()
 
-let incBalance (user: User) =
+let incBalance user =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [green]add[/]?"
         (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
         |> AnsiConsole.Prompt
     
-    markupWriteLine $"Adding [{balColor amount}]{amount:C}[/] to " user.AccountBalanceMarkup
+    markupWriteLine $"Adding [{balColor amount}]{amount:C}[/] to " <| AccountBalanceMarkup user
     user.IncrementBalance amount
-    markupWriteLine "Account Balance: " user.AccountBalanceMarkup
+    markupWriteLine "Account Balance: " <| AccountBalanceMarkup user
 
-let decBalance (user: User) =
+let decBalance user =
     let amount =
         let amtPrompt = TextPrompt<decimal> "How much do you want to [red]remove[/]?"
         (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
         |> AnsiConsole.Prompt
     
     try
-        let oldMarkup = user.AccountBalanceMarkup
+        let oldMarkup = AccountBalanceMarkup user
         user.DecrementBalance amount
         markupWriteLine $"Removing [{balColor -amount}]{amount:C}[/] from " oldMarkup
     with :? BalanceOverdrawException as ex ->
         AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
-    markupWriteLine "Account Balance: " user.AccountBalanceMarkup
+    markupWriteLine "Account Balance: " <| AccountBalanceMarkup user
 
-let listItems (user: User) =
+let listItems =
     let table = Table().AddColumns (
         TableColumn "[bold green]Name[/]",
         TableColumn "[bold blue]Price[/]"
     )
     
-    table.AddRows user.Items (fun item -> [
+    GetItems >> flip table.AddRows (fun item -> [
         Markup $"[green]{item.Name}[/]" :> IRenderable
         Markup $"[blue]{item.Price:C}[/]"
-    ]) |> AnsiConsole.Write
+    ]) >> AnsiConsole.Write
 
-let addItem (user: User) =
+let addItem user =
     let name =
         let prompt = TextPrompt<string> "What is the [green]name[/] of the item you wish to add?"
         (isNullOrWS >> not, "[red]Name cannot be empty[/]") |> prompt.Validate
@@ -197,15 +195,15 @@ let addItem (user: User) =
         (flip (>=) 0m, "[red]Price must be positive[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
     
-    user.AddItem name price
+    UserAddItem user name price
 
-let removeItem (user: User) =
-    user.RemoveItem (
-        let prompt = SelectionPrompt<Item>()
-        prompt.Title <- "What is the [green]name[/] of the item you wish to remove?"
-        prompt.AddChoices(user.Items).UseConverter(fun item -> item.Name)
-        |> AnsiConsole.Prompt
-    )
+let removeItem user =
+    SelectionPromptExtensions
+        .Title(SelectionPrompt(), "Select [green]item[/] to remove:")
+        .AddChoices(GetItems user)
+        .UseConverter(fun item -> item.Name)
+    |> AnsiConsole.Prompt
+    |> user.RemoveItem
 
 let makeTrue _ = true
 let selGroups = [
@@ -255,15 +253,17 @@ let startWebApi argv =
     )
     
     let postUser = POST >=> warbler (fun _ -> fun next ctx -> task {
-        let! body = ctx.BindJsonAsync<UserPost>()
-        let { username = un; password = pass; account_balance = bal } = body
+        let! {
+            username = un
+            password = pass
+            account_balance = bal
+        } = ctx.BindJsonAsync<UserPost>()
         
-        let status = (validateName un, validatePass pass) |> function
+        return! begin (validateName un, validatePass pass) |> function
             | Some msg, _ | _, Some msg -> RequestErrors.BAD_REQUEST msg
             | _ when bal < 0m -> RequestErrors.BAD_REQUEST "Account balance cannot be negative"
-            | _ -> users.Add(un, User body); Successful.NO_CONTENT
-        
-        return! status next ctx
+            | _ -> users.Add(un, User(un, pass, bal)); Successful.NO_CONTENT
+        end next ctx
     })
     
     let getUser username = warbler <| fun _ -> users.TryGetValue username |> function
@@ -277,7 +277,7 @@ let startWebApi argv =
     let putUser username = route "/accountBalance" >=> warbler (fun _ -> fun next ctx ->
         let { op = op; amount = amt } = ctx.BindQueryString<PutQuery>()
         
-        let status = users.TryGetValue username |> function
+        begin users.TryGetValue username |> function
             | true, _ when amt < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
             | true, user -> op |> function
                 | "inc" -> user.IncrementBalance amt; Successful.NO_CONTENT
@@ -286,8 +286,7 @@ let startWebApi argv =
                     with :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
                 | _ -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-        
-        status next ctx
+        end next ctx
     )
     
     let getItems username = warbler <| fun _ -> users.TryGetValue username |> function
@@ -297,13 +296,12 @@ let startWebApi argv =
     let postItem username = warbler <| fun _ -> fun next ctx -> task {
         let! { name = name; price = price } = ctx.BindJsonAsync<ItemPost>()
         
-        let status = users.TryGetValue username |> function
+        return! begin users.TryGetValue username |> function
             | true, _ when name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
             | true, _ when price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
             | true, user -> user.AddItem name price; Successful.NO_CONTENT
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-        
-        return! status next ctx
+        end next ctx
     }
     
     let delItem username = routef "/%s" <| fun name -> warbler <| fun _ -> users.TryGetValue username |> function
@@ -327,29 +325,21 @@ let startWebApi argv =
         ]
     ]
     
-    let servicesConfig (services: IServiceCollection) =
-        services.AddGiraffe() |> ignore
+    let swaggerConfig opts =
+        SwaggerUIOptionsExtensions.SwaggerEndpoint(opts, "/swagger/v1/swagger.json", "v1")
     
-    let swaggerConfig (opts: SwaggerUIOptions) =
-        opts.SwaggerEndpoint("/swagger/v1/swagger.json", "v1")
+    let appConfig = HttpsPolicyBuilderExtensions.UseHttpsRedirection >> fun builder ->
+        builder.UseSwaggerUI(swaggerConfig).UseGiraffe webApp
     
-    let appConfig (builder: IApplicationBuilder) =
-        builder.UseHttpsRedirection()
-            .UseSwaggerUI(swaggerConfig)
-            .UseGiraffe webApp
-    
-    let webHostConfig (builder: IWebHostBuilder) =
-        ignore <| builder.Configure(appConfig)
-            .ConfigureServices(servicesConfig)
+    let webHostConfig builder =
+        ignore <| WebHostBuilderExtensions.Configure(builder, appConfig)
+            .ConfigureServices(ServiceCollectionExtensions.AddGiraffe >> ignore)
             .UseUrls "https://localhost:5000"
     
-    let app =
-        Host.CreateDefaultBuilder(argv)
-            .ConfigureWebHostDefaults(webHostConfig)
-            .Build()
-    
-    app.StartAsync() |> ignore
-    app
+    (Host.CreateDefaultBuilder argv, webHostConfig)
+    |> GenericHostBuilderExtensions.ConfigureWebHostDefaults
+    |> fun builder -> builder.Build()
+    |> fun app -> app.StartAsync() |> ignore; app
 
 [<EntryPoint>]
 let main argv =

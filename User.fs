@@ -31,10 +31,14 @@ type User(name: string, pass: string, ?bal: decimal) =
     let _items = List<Item>()
     
     member _.UserId with get() = _userId
+    static member GetId (user: User) = user.UserId
     member _.Username with get() = _name
     member _.PasswordHash with set value = _pass <- value
     member _.AccountBalance with get() = _bal
+    member private _.BalMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
+    static member AccountBalanceMarkup (user: User) = user.BalMarkup
     member _.Items with get(): IReadOnlyList<Item> = _items
+    static member GetItems (user: User) = user.Items
     
     member _.ShortUser with get() = {| user_id = _userId; username = _name |}
     static member ToShortUser (user: User) = user.ShortUser
@@ -47,15 +51,11 @@ type User(name: string, pass: string, ?bal: decimal) =
     member private _.InitSalt salt = _salt <- salt
     member private _.InitPass pass = _pass <- pass
     member private _.InitBal balance = _bal <- balance
-    member private _.InitItems items =
-        _items.Clear()
-        _items.AddRange items
-    
-    member _.AccountBalanceMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
     
     member _.AddItem name price = { Name = name; Price = price; } |> _items.Add
     member _.AddItemPost post = { Name = post.name; Price = post.price; } |> _items.Add
     member _.RemoveItem item = _items.Remove item |> ignore
+    static member UserAddItem (user: User) name price = user.AddItem name price
     
     member _.IncrementBalance amount =
         if amount < 0m then invalidArg (nameof amount) "Amount must be positive"
@@ -153,23 +153,15 @@ type User(name: string, pass: string, ?bal: decimal) =
         parameters["@pass"].Value <- _pass
         parameters["@bal"].Value <- _bal
     
-    new reader as this =
-        User("", "")
-        then
-            reader.GetOrdinal "userid" |> reader.GetGuid |> this.InitId
-            reader.GetOrdinal "username" |> reader.GetString |> this.InitName
-            reader.GetOrdinal "salt" |> reader.GetValue |> unbox |> this.InitSalt
-            reader.GetOrdinal "pass" |> reader.GetValue |> unbox |> this.InitPass
-            reader.GetOrdinal "balance" |> reader.GetDecimal |> this.InitBal
-            
-            this.InitItems (
-                let items = List<Item>()
-                let nameOrd = reader.GetOrdinal "name"
-                let priceOrd = reader.GetOrdinal "price"
-                while reader.IsDBNull nameOrd |> not do
-                    items.Add { Name = reader.GetString nameOrd; Price = reader.GetDecimal priceOrd; }
-                    reader.Read() |> ignore
-                items
-            )
-    
-    new (user: UserPost) = User(user.username, user.password, user.account_balance)
+    new reader as this = User("", "") then
+        reader.GetOrdinal "userid" |> reader.GetGuid |> this.InitId
+        reader.GetOrdinal "username" |> reader.GetString |> this.InitName
+        reader.GetOrdinal "salt" |> reader.GetValue |> unbox |> this.InitSalt
+        reader.GetOrdinal "pass" |> reader.GetValue |> unbox |> this.InitPass
+        reader.GetOrdinal "balance" |> reader.GetDecimal |> this.InitBal
+        
+        let nameOrd = reader.GetOrdinal "name"
+        let priceOrd = reader.GetOrdinal "price"
+        while reader.IsDBNull nameOrd |> not do
+            (reader.GetString nameOrd, reader.GetDecimal priceOrd) ||> this.AddItem
+            reader.Read() |> ignore
