@@ -4,6 +4,8 @@ open Giraffe
 open ITS291FS.Utilities
 open ITS291FS.User
 open ITS291FS.SwaggerJson
+open Microsoft.AspNetCore.Hosting
+open Microsoft.Extensions.Hosting
 open type User
 open Spectre.Console
 open Spectre.Console.Rendering
@@ -27,7 +29,7 @@ let loadUsers path =
         conn.Open()
         
         LoadUsersFromDatabase conn users
-    with | :? SqliteException ->
+    with :? SqliteException ->
         connStrB.Mode <- SqliteOpenMode.ReadWriteCreate
         use conn = new SqliteConnection(connStrB.ConnectionString)
         conn.Open()
@@ -44,7 +46,7 @@ let saveUsers path =
         conn.Open()
         
         SaveUsersToDatabase conn users
-    with | :? SqliteException as ex ->
+    with :? SqliteException as ex ->
         AnsiConsole.MarkupLine $"[red]Error saving users: {ex.Message}[/]"
 
 let logon () =
@@ -63,7 +65,7 @@ let logon () =
     user
 
 let listUsers _ =
-    let table = Table().AddColumns(
+    let table = Table().AddColumns (
         TableColumn "[bold yellow]ID[/]",
         TableColumn "[bold green]Name[/]",
         TableColumn "[bold mediumorchid1_1]Item Count[/]",
@@ -80,26 +82,26 @@ let listUsers _ =
 let isNullOrWS = String.IsNullOrWhiteSpace
 
 let validateName = function
-    | n when n |> isNullOrWS     -> Error "Username cannot be empty"
-    | n when users.ContainsKey n -> Error "Username already exists"
-    | _                          -> Ok ()
+    | n when n |> isNullOrWS     -> Some "Username cannot be empty"
+    | n when users.ContainsKey n -> Some "Username already exists"
+    | _                          -> None
 
 let validatePass = function
-    | p when p |> isNullOrWS         -> Error "Password cannot be empty"
-    | p when p.Length < 8            -> Error "Password must be at least 8 characters"
-    | p when p.Any Char.IsWhiteSpace -> Error "Password cannot contain whitespace"
-    | p when p.None Char.IsUpper     -> Error "Password must contain at least one uppercase letter"
-    | p when p.None Char.IsLower     -> Error "Password must contain at least one lowercase letter"
-    | p when p.All Char.IsLetter     -> Error "Password must contain at least one non-letter character"
-    | _                              -> Ok ()
+    | p when p |> isNullOrWS         -> Some "Password cannot be empty"
+    | p when p.Length < 8            -> Some "Password must be at least 8 characters"
+    | p when p.Any Char.IsWhiteSpace -> Some "Password cannot contain whitespace"
+    | p when p.None Char.IsUpper     -> Some "Password must contain at least one uppercase letter"
+    | p when p.None Char.IsLower     -> Some "Password must contain at least one lowercase letter"
+    | p when p.All Char.IsLetter     -> Some "Password must contain at least one non-letter character"
+    | _                              -> None
 
 let nameValidator = validateName >> function
-    | Error msg -> ValidationResult.Error $"[red]{msg}[/]"
-    | _         -> ValidationResult.Success()
+    | Some msg -> ValidationResult.Error $"[red]{msg}[/]"
+    | _        -> ValidationResult.Success()
 
 let passValidator = validatePass >> function
-    | Error msg -> ValidationResult.Error $"[red]{msg}[/]"
-    | _         -> ValidationResult.Success()
+    | Some msg -> ValidationResult.Error $"[red]{msg}[/]"
+    | _        -> ValidationResult.Success()
 
 let addUser _ =
     let name =
@@ -121,19 +123,16 @@ let addUser _ =
     users.Add(name, User(name, pass, bal))
 
 let removeUser _ =
-    let name =
-        let prompt = SelectionPrompt<string>()
-        prompt.Title <- "Select [green]user[/] to remove:"
-        "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices
-        |> AnsiConsole.Prompt
-    
-    match name with
+    let prompt = SelectionPrompt<string>()
+    prompt.Title <- "Select [green]user[/] to remove:"
+    "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices
+    |> AnsiConsole.Prompt |> function
     | "<cancel>" -> ()
     | "admin" -> AnsiConsole.MarkupLine "[red]Cannot remove admin user[/]"
     | n -> users.Remove n |> ignore
 
 let showUserDetails (user: User) =
-    let table = Table().AddColumns(
+    let table = Table().AddColumns (
         TableColumn "[bold mediumorchid1_1]Property[/]",
         TableColumn "[bold green]Value[/]"
     )
@@ -141,7 +140,7 @@ let showUserDetails (user: User) =
     table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{user.UserId}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Name[/]", $"[green]{user.Username}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Item Count[/]", $"[green]{user.Items.Count}[/]") |> ignore
-    table.AddRow(
+    table.AddRow (
         Markup "[mediumorchid1_1]Balance[/]",
         user.AccountBalanceMarkup
     ) |> AnsiConsole.Write
@@ -171,13 +170,13 @@ let decBalance (user: User) =
         let oldMarkup = user.AccountBalanceMarkup
         user.DecrementBalance amount
         markupWriteLine $"Removing [{balColor -amount}]{amount:C}[/] from " oldMarkup
-    with | :? BalanceOverdrawException as ex ->
+    with :? BalanceOverdrawException as ex ->
         AnsiConsole.MarkupLine $"[red]{ex.Message}[/]"
     
     markupWriteLine "Account Balance: " user.AccountBalanceMarkup
 
 let listItems (user: User) =
-    let table = Table().AddColumns(
+    let table = Table().AddColumns (
         TableColumn "[bold green]Name[/]",
         TableColumn "[bold blue]Price[/]"
     )
@@ -238,7 +237,7 @@ let rec doMenu user =
     
     if sel user then doMenu user
 
-let startWebApi (argv: string array) =
+let startWebApi argv =
     let redirects = choose [
         route "/" >=> redirectTo true "/swagger/index.html"
         route "/index.html" >=> redirectTo true "/"
@@ -247,120 +246,109 @@ let startWebApi (argv: string array) =
     
     let swaggerRoute =
         route "/swagger/v1/swagger.json"
+        >=> GET
         >=> setContentType "application/json"
         >=> setBodyFromString swaggerJson
     
-    let getUsers = route "/users/list" >=> Successful.ok (warbler (fun _ ->
+    let getUsers = route "/list" >=> GET >=> Successful.ok (warbler <| fun _ ->
         users.Values |> Seq.map ToShortUser |> json
-    ))
+    )
     
-    let postUser = route "/users" >=> warbler (fun _ -> fun next ctx -> task {
+    let postUser = POST >=> warbler (fun _ -> fun next ctx -> task {
         let! body = ctx.BindJsonAsync<UserPost>()
         let { username = un; password = pass; account_balance = bal } = body
         
-        let status =
-            match validateName un, validatePass pass with
-            | Error msg, _ | _, Error msg -> RequestErrors.BAD_REQUEST msg
+        let status = (validateName un, validatePass pass) |> function
+            | Some msg, _ | _, Some msg -> RequestErrors.BAD_REQUEST msg
             | _ when bal < 0m -> RequestErrors.BAD_REQUEST "Account balance cannot be negative"
             | _ -> users.Add(un, User body); Successful.NO_CONTENT
         
         return! status next ctx
     })
     
-    let delUser = routef "/%s" (fun username -> warbler (fun _ ->
-        match users.Remove username with
-        | true -> Successful.NO_CONTENT
-        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    ))
-    
-    let getUser = routef "/%s" (fun username -> warbler (fun _ ->
-        match users.TryGetValue username with
+    let getUser username = warbler <| fun _ -> users.TryGetValue username |> function
         | true, user -> Successful.ok (json user.LongUser)
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    ))
     
-    let putUser = routef "/%s/accountBalance" (fun username -> warbler (fun _ -> fun next ctx ->
+    let delUser username = warbler <| fun _ -> users.Remove username |> function
+        | true -> Successful.NO_CONTENT
+        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+    
+    let putUser username = route "/accountBalance" >=> warbler (fun _ -> fun next ctx ->
         let { op = op; amount = amt } = ctx.BindQueryString<PutQuery>()
         
-        let status =
-            match users.TryGetValue username with
+        let status = users.TryGetValue username |> function
             | true, _ when amt < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
-            | true, user ->
-                match op with
+            | true, user -> op |> function
                 | "inc" -> user.IncrementBalance amt; Successful.NO_CONTENT
                 | "dec" ->
                     try user.DecrementBalance amt; Successful.NO_CONTENT
-                    with | :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
+                    with :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
                 | _ -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
         
         status next ctx
-    ))
+    )
     
-    let getItems = routef "/%s/items" (fun username -> warbler (fun _ ->
-        match users.TryGetValue username with
+    let getItems username = warbler <| fun _ -> users.TryGetValue username |> function
         | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    ))
     
-    let postItem = routef "/%s/items" (fun username -> warbler (fun _ -> fun next ctx -> task {
+    let postItem username = warbler <| fun _ -> fun next ctx -> task {
         let! { name = name; price = price } = ctx.BindJsonAsync<ItemPost>()
         
-        let status =
-            match users.TryGetValue username with
+        let status = users.TryGetValue username |> function
             | true, _ when name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
             | true, _ when price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
             | true, user -> user.AddItem name price; Successful.NO_CONTENT
             | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
         
         return! status next ctx
-    }))
+    }
     
-    let delItem = routef "/%s/items/%s" (fun (username, name) -> warbler (fun _ ->
-        match users.TryGetValue username with
+    let delItem username = routef "/%s" <| fun name -> warbler <| fun _ -> users.TryGetValue username |> function
         | true, user ->
             try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
-            with | :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
+            with :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
         | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    ))
     
     let webApp = choose [
-        redirects
-        GET >=> choose [
-            swaggerRoute
-            getUsers
-            getUser
-            getItems
+        redirects; swaggerRoute
+        subRoute "/users" <| choose [getUsers; postUser]
+        subRoutef "/%s" <| fun username -> choose [
+            subRoute "/items" <| choose [
+                GET >=> getItems username
+                POST >=> postItem username
+                DELETE >=> delItem username
+            ]
+            GET >=> getUser username
+            DELETE >=> delUser username
+            PUT >=> putUser username
         ]
-        POST >=> choose [
-            postUser
-            postItem
-        ]
-        DELETE >=> choose [
-            delUser
-            delItem
-        ]
-        PUT >=> putUser
     ]
     
-    let configureServices (services: IServiceCollection) =
+    let servicesConfig (services: IServiceCollection) =
         services.AddGiraffe() |> ignore
     
-    let configureSwagger (opts: SwaggerUIOptions) =
+    let swaggerConfig (opts: SwaggerUIOptions) =
         opts.SwaggerEndpoint("/swagger/v1/swagger.json", "v1")
     
-    let configureApp (app: IApplicationBuilder) =
-        app.UseGiraffe webApp
-        app.UseHttpsRedirection() |> ignore
-        app.UseSwaggerUI configureSwagger |> ignore
+    let appConfig (builder: IApplicationBuilder) =
+        builder.UseHttpsRedirection()
+            .UseSwaggerUI(swaggerConfig)
+            .UseGiraffe webApp
+    
+    let webHostConfig (builder: IWebHostBuilder) =
+        ignore <| builder.Configure(appConfig)
+            .ConfigureServices(servicesConfig)
+            .UseUrls "https://localhost:5000"
     
     let app =
-        let builder = WebApplication.CreateBuilder(argv)
-        configureServices builder.Services
-        builder.Build()
+        Host.CreateDefaultBuilder(argv)
+            .ConfigureWebHostDefaults(webHostConfig)
+            .Build()
     
-    configureApp app
-    app.RunAsync "https://localhost:5000" |> ignore
+    app.StartAsync() |> ignore
     app
 
 [<EntryPoint>]
@@ -374,12 +362,11 @@ let main argv =
     argv[0] |> loadUsers
     let app = startWebApi argv
     
-    Console.CancelKeyPress.Add(fun _ ->
+    Console.CancelKeyPress.Add <| fun _ ->
         AnsiConsole.WriteLine()
         if ConfirmationPrompt "Do you want to save what you have?" |> AnsiConsole.Prompt then
             argv[0] |> saveUsers
         app.StopAsync().Wait()
-    )
     
     logon() |> doMenu
     argv[0] |> saveUsers

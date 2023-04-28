@@ -42,7 +42,7 @@ let swaggerJson = """{
             }
         },
         "/{username}": {
-            "delete": {
+            "get": {
                 "tags": [
                     "ITS291FS"
                 ],
@@ -63,7 +63,7 @@ let swaggerJson = """{
                     }
                 }
             },
-            "get": {
+            "delete": {
                 "tags": [
                     "ITS291FS"
                 ],
