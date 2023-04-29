@@ -165,3 +165,5 @@ type User(name: string, pass: string, ?bal: decimal) =
         while reader.IsDBNull nameOrd |> not do
             (reader.GetString nameOrd, reader.GetDecimal priceOrd) ||> this.AddItem
             reader.Read() |> ignore
+            
+    new (post: UserPost) = User(post.username, post.password, post.account_balance)

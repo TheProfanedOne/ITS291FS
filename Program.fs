@@ -235,81 +235,62 @@ let rec doMenu user =
     
     if sel user then doMenu user
 
+let redirects = choose [
+    route "/" >=> redirectTo true "/swagger/index.html"
+    route "/index.html" >=> redirectTo true "/"
+    route "/swagger" >=> redirectTo true "/"
+]
+
+let swaggerRoute =
+    route "/swagger/v1/swagger.json"
+    >=> GET
+    >=> setContentType "application/json"
+    >=> setBodyFromString swaggerJson
+
+let getUsers = route "/list" >=> GET >=> Successful.ok (warbler <| fun _ -> Seq.map ToShortUser users.Values |> json)
+
+let postUser = POST >=> warbler (fun _ -> bindJson <| fun body ->
+    match validateName body.username, validatePass body.password with
+    | Some msg, _ | _, Some msg -> RequestErrors.BAD_REQUEST msg
+    | _ when body.account_balance < 0m -> RequestErrors.BAD_REQUEST "Account balance cannot be negative"
+    | _ -> users.Add(body.username, User body); Successful.NO_CONTENT)
+
+let getUser username = warbler <| fun _ -> users.TryGetValue username |> function
+    | true, user -> Successful.ok (json user.LongUser)
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+
+let delUser username = warbler <| fun _ -> users.Remove username |> function
+    | true -> Successful.NO_CONTENT
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+
+let putUser username = route "/accountBalance" >=> warbler (fun _ ->
+    tryBindQuery RequestErrors.BAD_REQUEST None <| fun query -> users.TryGetValue username |> function
+    | true, _ when query.amount < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
+    | true, user -> query.op |> function
+        | "inc" -> user.IncrementBalance query.amount; Successful.NO_CONTENT
+        | "dec" ->
+            try user.DecrementBalance query.amount; Successful.NO_CONTENT
+            with :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
+        | op -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`")
+
+let getItems username = warbler <| fun _ -> users.TryGetValue username |> function
+    | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+
+let postItem username = warbler <| fun _ -> bindJson <| fun body -> users.TryGetValue username |> function
+    | true, _ when body.name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
+    | true, _ when body.price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
+    | true, user -> user.AddItem body.name body.price; Successful.NO_CONTENT
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+
+let delItem username = routef "/%s" <| fun name -> warbler <| fun _ -> users.TryGetValue username |> function
+    | true, user ->
+        try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
+        with :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
+    | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
+
 let startWebApi argv =
-    let redirects = choose [
-        route "/" >=> redirectTo true "/swagger/index.html"
-        route "/index.html" >=> redirectTo true "/"
-        route "/swagger" >=> redirectTo true "/"
-    ]
-    
-    let swaggerRoute =
-        route "/swagger/v1/swagger.json"
-        >=> GET
-        >=> setContentType "application/json"
-        >=> setBodyFromString swaggerJson
-    
-    let getUsers = route "/list" >=> GET >=> Successful.ok (warbler <| fun _ ->
-        users.Values |> Seq.map ToShortUser |> json
-    )
-    
-    let postUser = POST >=> warbler (fun _ -> fun next ctx -> task {
-        let! {
-            username = un
-            password = pass
-            account_balance = bal
-        } = ctx.BindJsonAsync<UserPost>()
-        
-        return! begin (validateName un, validatePass pass) |> function
-            | Some msg, _ | _, Some msg -> RequestErrors.BAD_REQUEST msg
-            | _ when bal < 0m -> RequestErrors.BAD_REQUEST "Account balance cannot be negative"
-            | _ -> users.Add(un, User(un, pass, bal)); Successful.NO_CONTENT
-        end next ctx
-    })
-    
-    let getUser username = warbler <| fun _ -> users.TryGetValue username |> function
-        | true, user -> Successful.ok (json user.LongUser)
-        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    
-    let delUser username = warbler <| fun _ -> users.Remove username |> function
-        | true -> Successful.NO_CONTENT
-        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    
-    let putUser username = route "/accountBalance" >=> warbler (fun _ -> fun next ctx ->
-        let { op = op; amount = amt } = ctx.BindQueryString<PutQuery>()
-        
-        begin users.TryGetValue username |> function
-            | true, _ when amt < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
-            | true, user -> op |> function
-                | "inc" -> user.IncrementBalance amt; Successful.NO_CONTENT
-                | "dec" ->
-                    try user.DecrementBalance amt; Successful.NO_CONTENT
-                    with :? BalanceOverdrawException as ex -> RequestErrors.BAD_REQUEST ex.Message
-                | _ -> RequestErrors.BAD_REQUEST $"Invalid operation: `{op}`"
-            | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-        end next ctx
-    )
-    
-    let getItems username = warbler <| fun _ -> users.TryGetValue username |> function
-        | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
-        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    
-    let postItem username = warbler <| fun _ -> fun next ctx -> task {
-        let! { name = name; price = price } = ctx.BindJsonAsync<ItemPost>()
-        
-        return! begin users.TryGetValue username |> function
-            | true, _ when name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
-            | true, _ when price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
-            | true, user -> user.AddItem name price; Successful.NO_CONTENT
-            | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-        end next ctx
-    }
-    
-    let delItem username = routef "/%s" <| fun name -> warbler <| fun _ -> users.TryGetValue username |> function
-        | true, user ->
-            try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
-            with :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
-        | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
-    
     let webApp = choose [
         redirects; swaggerRoute
         subRoute "/users" <| choose [getUsers; postUser]
@@ -325,8 +306,7 @@ let startWebApi argv =
         ]
     ]
     
-    let swaggerConfig opts =
-        SwaggerUIOptionsExtensions.SwaggerEndpoint(opts, "/swagger/v1/swagger.json", "v1")
+    let swaggerConfig opts = SwaggerUIOptionsExtensions.SwaggerEndpoint(opts, "/swagger/v1/swagger.json", "v1")
     
     let appConfig = HttpsPolicyBuilderExtensions.UseHttpsRedirection >> fun builder ->
         builder.UseSwaggerUI(swaggerConfig).UseGiraffe webApp
