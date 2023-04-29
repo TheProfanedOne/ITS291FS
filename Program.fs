@@ -1,5 +1,6 @@
 ﻿module ITS291FS.Program
 
+open System.Globalization
 open Giraffe
 open ITS291FS.Utilities
 open ITS291FS.User
@@ -263,8 +264,9 @@ let delUser username = warbler <| fun _ -> users.Remove username |> function
     | true -> Successful.NO_CONTENT
     | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
 
+let usa = Some <| CultureInfo.CreateSpecificCulture "en-US"
 let putUser username = route "/accountBalance" >=> warbler (fun _ ->
-    tryBindQuery RequestErrors.BAD_REQUEST None <| fun query -> users.TryGetValue username |> function
+    tryBindQuery RequestErrors.BAD_REQUEST usa <| fun query -> users.TryGetValue username |> function
     | true, _ when query.amount < 0m -> RequestErrors.BAD_REQUEST "Amount cannot be negative"
     | true, user -> query.op |> function
         | "inc" -> user.IncrementBalance query.amount; Successful.NO_CONTENT
