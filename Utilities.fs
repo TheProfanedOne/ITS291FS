@@ -7,6 +7,7 @@ open Spectre.Console.Rendering
 [<CLIMutable>] type PutQuery = { op: string; amount: decimal }
 
 let flip f x y = f y x
+let flip' f x y = f (y, x)
 
 // String Extensions
 type String with

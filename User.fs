@@ -3,6 +3,7 @@ module ITS291FS.User
 open System
 open System.Collections.Generic
 open System.Runtime.CompilerServices
+open System.Runtime.InteropServices
 open System.Security.Cryptography
 open Microsoft.Data.Sqlite
 open Spectre.Console
@@ -21,14 +22,18 @@ exception BalanceOverdrawException of string
 type User(name: string, pass: string, ?bal: decimal) =
     let getPassHash (salt: byte[]) (pass: string) =
         let pBytes = System.Text.Encoding.UTF8.GetBytes pass
-        SHA256.HashData salt |> Array.append pBytes |> SHA256.HashData |> Array.append salt |> SHA256.HashData
+        SHA256.HashData salt
+        |> Array.append pBytes
+        |> SHA256.HashData
+        |> Array.append salt
+        |> SHA256.HashData
     
     let mutable _userId = Guid.NewGuid()
     let mutable _name = name
     let mutable _salt = Guid.NewGuid().ToByteArray()
     let mutable _pass = getPassHash _salt pass
     let mutable _bal = defaultArg bal 0.00m
-    let _items = List<Item>()
+    let _items = List()
     
     member _.UserId with get() = _userId
     static member GetId (user: User) = user.UserId
@@ -37,14 +42,14 @@ type User(name: string, pass: string, ?bal: decimal) =
     member _.AccountBalance with get() = _bal
     member private _.BalMarkup with get() = Markup $"[{balColor _bal}]{_bal:C}[/]"
     static member AccountBalanceMarkup (user: User) = user.BalMarkup
-    member _.Items with get(): IReadOnlyList<Item> = _items
+    member _.Items with get(): IReadOnlyList<_> = _items
     static member GetItems (user: User) = user.Items
     
     member _.ShortUser with get() = {| user_id = _userId; username = _name |}
     static member ToShortUser (user: User) = user.ShortUser
     member _.LongUser with get() =
         {| user_id = _userId; username = _name; account_balance = _bal; item_count = _items.Count |}
-    static member ToItemJson (item: Item) = {| name = item.Name; price = item.Price |}
+    static member ToItemJson item = {| name = item.Name; price = item.Price |}
     
     member private _.InitId id = _userId <- id
     member private _.InitName username = _name <- username
@@ -61,10 +66,9 @@ type User(name: string, pass: string, ?bal: decimal) =
         if amount < 0m then invalidArg (nameof amount) "Amount must be positive"
         _bal <- _bal + amount
     
-    member _.DecrementBalance(amount, ?preventOverdraw) =
+    member _.DecrementBalance(amount, [<Optional; DefaultParameterValue(true)>] preventOverdraw) =
         if amount < 0m then invalidArg (nameof amount) "Amount must be positive"
-        if (defaultArg preventOverdraw true) && amount > _bal then
-            BalanceOverdrawException "Insufficient funds" |> raise
+        if preventOverdraw && amount > _bal then BalanceOverdrawException "Insufficient funds" |> raise
         _bal <- _bal - amount
     
     member _.CheckPassword pass = getPassHash _salt pass = _pass
@@ -86,7 +90,7 @@ type User(name: string, pass: string, ?bal: decimal) =
             let user = User reader
             users.Add(user.Username, user)
     
-    static member InitDatabaseAndUsers (conn: SqliteConnection) (users: Dictionary<string, User>) =
+    static member InitDatabaseAndUsers (conn: SqliteConnection) (users: Dictionary<_, _>) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "
             create table users (
@@ -112,7 +116,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         users.Clear()
         users.Add("admin", User("admin", "admin"))
     
-    static member SaveUsersToDatabase (conn: SqliteConnection) (users: Dictionary<string, User>) =
+    static member SaveUsersToDatabase (conn: SqliteConnection) (users: User seq) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "
             delete from items;
@@ -129,7 +133,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         cmd.Parameters.Add("@pass", SqliteType.Blob) |> ignore
         cmd.Parameters.Add("@bal", SqliteType.Real) |> ignore
         
-        for user in users.Values do
+        for user in users do
             user.MapDataToCommand cmd.Parameters
             cmd.ExecuteNonQuery() |> ignore
         
@@ -139,7 +143,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         cmd.Parameters.Add("@name", SqliteType.Text) |> ignore
         cmd.Parameters.Add("@price", SqliteType.Real) |> ignore
         
-        for user in users.Values do
+        for user in users do
             cmd.Parameters["@userid"].Value <- user.UserId
             for item in user.Items do
                 cmd.Parameters["@name"].Value <- item.Name
@@ -165,5 +169,5 @@ type User(name: string, pass: string, ?bal: decimal) =
         while reader.IsDBNull nameOrd |> not do
             (reader.GetString nameOrd, reader.GetDecimal priceOrd) ||> this.AddItem
             reader.Read() |> ignore
-            
+    
     new (post: UserPost) = User(post.username, post.password, post.account_balance)

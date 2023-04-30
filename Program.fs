@@ -16,7 +16,7 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.Data.Sqlite
 open Microsoft.Extensions.Logging
 
-let users = Dictionary<string, User>()
+let users = Dictionary()
 
 let loadUsers path =
     let connStrB = SqliteConnectionStringBuilder()
@@ -44,19 +44,19 @@ let saveUsers path =
         use conn = new SqliteConnection(connStrB.ConnectionString)
         conn.Open()
         
-        SaveUsersToDatabase conn users
+        SaveUsersToDatabase conn users.Values
     with :? SqliteException as ex ->
         AnsiConsole.MarkupLine $"[red]Error saving users: {ex.Message}[/]"
 
 let logon () =
     let user =
-        let prompt = TextPrompt<User> "[bold green]login[/] ([dim]username[/]):"
+        let prompt = TextPrompt "[bold green]login[/] ([dim]username[/]):"
         prompt.InvalidChoiceMessage <- "[red]unknown login[/]"
         prompt.AddChoices(users.Values).HideChoices().WithConverter (fun user -> user.Username)
         |> AnsiConsole.Prompt
     
     let _ =
-        let prompt = TextPrompt<string> "Enter [cyan1]password[/]?"
+        let prompt = TextPrompt "Enter [cyan1]password[/]?"
         prompt.Secret().PromptStyle <- "mediumorchid1_1"
         (user.CheckPassword, "[red]invalid password[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
@@ -64,19 +64,19 @@ let logon () =
     user
 
 let listUsers _ =
-    let table = Table().AddColumns (
+    let table = Table().AddColumns begin
         TableColumn "[bold yellow]ID[/]",
         TableColumn "[bold green]Name[/]",
         TableColumn "[bold mediumorchid1_1]Item Count[/]",
         TableColumn "[bold blue]Balance[/]"
-    )
+    end
     
-    table.AddRows users.Values (fun user -> [
+    table.AddRows users.Values <| fun user -> [
         Markup $"[yellow]{user.UserId}[/]" :> IRenderable
         Markup $"[green]{user.Username}[/]"
         Markup $"[mediumorchid1_1]{user.Items.Count}[/]"
         AccountBalanceMarkup user
-    ]) |> AnsiConsole.Write
+    ] |> AnsiConsole.Write
 
 let isNullOrWS = String.IsNullOrWhiteSpace
 
@@ -104,25 +104,25 @@ let passValidator = validatePass >> function
 
 let addUser _ =
     let name =
-        let prompt = TextPrompt<string> "Enter [green]username[/]:"
+        let prompt = TextPrompt "Enter [green]username[/]:"
         prompt.Validator <- nameValidator
         prompt |> AnsiConsole.Prompt
     
     let pass =
-        let prompt = TextPrompt<string> "Enter [cyan1]password[/]:"
+        let prompt = TextPrompt "Enter [cyan1]password[/]:"
         prompt.Secret().PromptStyle <- "mediumorchid1_1"
         prompt.Validator <- passValidator
         prompt |> AnsiConsole.Prompt
     
     let bal =
-        let prompt = TextPrompt<decimal> "Enter an initial [blue]balance[/] [dim](Must be positive)[/]:"
+        let prompt = TextPrompt "Enter an initial [blue]balance[/] [dim](Must be positive)[/]:"
         prompt.Validate (flip (>=) 0m, "[red]Balance must be positive[/]")
         |> AnsiConsole.Prompt
     
     users.Add(name, User(name, pass, bal))
 
 let removeUser _ =
-    let prompt = SelectionPrompt<string>()
+    let prompt = SelectionPrompt()
     prompt.Title <- "Select [green]user[/] to remove:"
     "<cancel>" :: List.ofSeq users.Keys |> prompt.AddChoices
     |> AnsiConsole.Prompt |> function
@@ -151,7 +151,7 @@ let markupWriteLine str (mark: IRenderable) =
 
 let incBalance user =
     let amount =
-        let amtPrompt = TextPrompt<decimal> "How much do you want to [green]add[/]?"
+        let amtPrompt = TextPrompt "How much do you want to [green]add[/]?"
         (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
         |> AnsiConsole.Prompt
     
@@ -161,7 +161,7 @@ let incBalance user =
 
 let decBalance user =
     let amount =
-        let amtPrompt = TextPrompt<decimal> "How much do you want to [red]remove[/]?"
+        let amtPrompt = TextPrompt "How much do you want to [red]remove[/]?"
         (flip (>=) 0m, "[red]Amount must be positive[/]") |> amtPrompt.Validate
         |> AnsiConsole.Prompt
     
@@ -174,25 +174,25 @@ let decBalance user =
     
     markupWriteLine "Account Balance: " <| AccountBalanceMarkup user
 
-let listItems =
+let listItems user =
     let table = Table().AddColumns (
         TableColumn "[bold green]Name[/]",
         TableColumn "[bold blue]Price[/]"
     )
     
-    GetItems >> flip table.AddRows (fun item -> [
+    GetItems user |> table.AddRows <| fun item -> [
         Markup $"[green]{item.Name}[/]" :> IRenderable
         Markup $"[blue]{item.Price:C}[/]"
-    ]) >> AnsiConsole.Write
+    ] |> AnsiConsole.Write
 
 let addItem user =
     let name =
-        let prompt = TextPrompt<string> "What is the [green]name[/] of the item you wish to add?"
+        let prompt = TextPrompt "What is the [green]name[/] of the item you wish to add?"
         (isNullOrWS >> not, "[red]Name cannot be empty[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
     
     let price =
-        let prompt = TextPrompt<decimal> "What is the [blue]price[/] of the item?"
+        let prompt = TextPrompt "What is the [blue]price[/] of the item?"
         (flip (>=) 0m, "[red]Price must be positive[/]") |> prompt.Validate
         |> AnsiConsole.Prompt
     
@@ -228,7 +228,7 @@ let SENTINEL = ("Quit", makeTrue >> not)
 
 let rec doMenu user =
     let sel =
-        let menu = SelectionPrompt<string * (User -> bool)>()
+        let menu = SelectionPrompt()
         menu.Title <- "What would you like to do?"
         selGroups |> List.iter (menu.AddChoiceGroup >> ignore)
         menu.AddChoices(SENTINEL).UseConverter(fst)
@@ -318,8 +318,10 @@ let startWebApi argv =
             .ConfigureServices(ServiceCollectionExtensions.AddGiraffe >> ignore)
             .UseUrls "https://localhost:5000"
     
-    (Host.CreateDefaultBuilder argv, webHostConfig)
-    |> GenericHostBuilderExtensions.ConfigureWebHostDefaults
+    let configureDefaults = flip' GenericHostBuilderExtensions.ConfigureWebHostDefaults
+    
+    Host.CreateDefaultBuilder argv
+    |> configureDefaults webHostConfig
     |> fun builder -> builder.Build()
     |> fun app -> app.StartAsync() |> ignore; app
 
