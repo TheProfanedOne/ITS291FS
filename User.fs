@@ -73,7 +73,7 @@ type User(name: string, pass: string, ?bal: decimal) =
     
     member _.CheckPassword pass = getPassHash _salt pass = _pass
     
-    static member LoadUsersFromDatabase (conn: SqliteConnection) (users: Dictionary<string, User>) =
+    static member LoadUsersFromDatabase (conn: SqliteConnection) (users: Dictionary<_, _>) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "
             select u.*, i.name, i.price
