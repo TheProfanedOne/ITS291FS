@@ -130,13 +130,13 @@ let removeUser _ =
     | "admin" -> AnsiConsole.MarkupLine "[red]Cannot remove admin user[/]"
     | n -> users.Remove n |> ignore
 
-let showUserDetails user =
+let showUserDetails (user: User) =
     let table = Table().AddColumns (
         TableColumn "[bold mediumorchid1_1]Property[/]",
         TableColumn "[bold green]Value[/]"
     )
     
-    table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{GetId user}[/]") |> ignore
+    table.AddRow("[mediumorchid1_1]ID[/]", $"[green]{user.UserId}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Name[/]", $"[green]{user.Username}[/]") |> ignore
     table.AddRow("[mediumorchid1_1]Item Count[/]", $"[green]{user.Items.Count}[/]") |> ignore
     table.AddRow (

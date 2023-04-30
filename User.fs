@@ -36,7 +36,6 @@ type User(name: string, pass: string, ?bal: decimal) =
     let _items = List()
     
     member _.UserId with get() = _userId
-    static member GetId (user: User) = user.UserId
     member _.Username with get() = _name
     member _.PasswordHash with set value = _pass <- value
     member _.AccountBalance with get() = _bal
@@ -60,7 +59,7 @@ type User(name: string, pass: string, ?bal: decimal) =
     member _.AddItem name price = { Name = name; Price = price; } |> _items.Add
     member _.AddItemPost post = { Name = post.name; Price = post.price; } |> _items.Add
     member _.RemoveItem item = _items.Remove item |> ignore
-    static member UserAddItem (user: User) name price = user.AddItem name price
+    static member UserAddItem (user: User) = user.AddItem
     
     member _.IncrementBalance amount =
         if amount < 0m then invalidArg (nameof amount) "Amount must be positive"
@@ -157,7 +156,7 @@ type User(name: string, pass: string, ?bal: decimal) =
         parameters["@pass"].Value <- _pass
         parameters["@bal"].Value <- _bal
     
-    new reader as this = User("", "") then
+    new (reader: SqliteDataReader) as this = User("", "") then
         reader.GetOrdinal "userid" |> reader.GetGuid |> this.InitId
         reader.GetOrdinal "username" |> reader.GetString |> this.InitName
         reader.GetOrdinal "salt" |> reader.GetValue |> unbox |> this.InitSalt
@@ -170,4 +169,4 @@ type User(name: string, pass: string, ?bal: decimal) =
             (reader.GetString nameOrd, reader.GetDecimal priceOrd) ||> this.AddItem
             reader.Read() |> ignore
     
-    new (post: UserPost) = User(post.username, post.password, post.account_balance)
+    new post = User(post.username, post.password, post.account_balance)
