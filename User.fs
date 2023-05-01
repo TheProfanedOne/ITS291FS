@@ -15,9 +15,20 @@ let balColor = function
 
 exception BalanceOverdrawException of string
 
-[<IsReadOnly; Struct>] type Item = { Name: string; Price: decimal; }
 [<CLIMutable>] type ItemPost = { name: string; price: decimal }
 [<CLIMutable>] type UserPost = { username: string; password: string; account_balance: decimal }
+
+[<IsReadOnly; Struct>]
+type Item =
+    val private Name: string
+    val private Price: decimal
+    
+    static member GetName (item: Item) = item.Name
+    static member GetPrice (item: Item) = item.Price
+    static member ToJson (item: Item) = {| name = item.Name; price = item.Price |}
+    
+    new (name, price) = { Name = name; Price = price }
+    new post = { Name = post.name; Price = post.price }
 
 type User(name: string, pass: string, ?bal: decimal) =
     let getPassHash (salt: byte[]) (pass: string) =
@@ -48,7 +59,6 @@ type User(name: string, pass: string, ?bal: decimal) =
     static member ToShortUser (user: User) = user.ShortUser
     member _.LongUser with get() =
         {| user_id = _userId; username = _name; account_balance = _bal; item_count = _items.Count |}
-    static member ToItemJson item = {| name = item.Name; price = item.Price |}
     
     member private _.InitId id = _userId <- id
     member private _.InitName username = _name <- username
@@ -56,8 +66,8 @@ type User(name: string, pass: string, ?bal: decimal) =
     member private _.InitPass pass = _pass <- pass
     member private _.InitBal balance = _bal <- balance
     
-    member _.AddItem name price = { Name = name; Price = price; } |> _items.Add
-    member _.AddItemPost post = { Name = post.name; Price = post.price; } |> _items.Add
+    member _.AddItem name price = Item(name, price) |> _items.Add
+    member _.AddItemPost post = Item post |> _items.Add
     member _.RemoveItem item = _items.Remove item |> ignore
     static member UserAddItem (user: User) = user.AddItem
     
@@ -145,8 +155,8 @@ type User(name: string, pass: string, ?bal: decimal) =
         for user in users do
             cmd.Parameters["@userid"].Value <- user.UserId
             for item in user.Items do
-                cmd.Parameters["@name"].Value <- item.Name
-                cmd.Parameters["@price"].Value <- item.Price
+                cmd.Parameters["@name"].Value <- item |> Item.GetName
+                cmd.Parameters["@price"].Value <- item |> Item.GetPrice
                 cmd.ExecuteNonQuery() |> ignore
     
     member private _.MapDataToCommand (parameters: SqliteParameterCollection) =

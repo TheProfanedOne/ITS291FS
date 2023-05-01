@@ -181,8 +181,8 @@ let listItems user =
     )
     
     GetItems user |> table.AddRows <| fun item -> [
-        Markup $"[green]{item.Name}[/]" :> IRenderable
-        Markup $"[blue]{item.Price:C}[/]"
+        Markup $"[green]{Item.GetName item}[/]" :> IRenderable
+        Markup $"[blue]{Item.GetPrice item}[/]"
     ] |> AnsiConsole.Write
 
 let addItem user =
@@ -199,10 +199,9 @@ let addItem user =
     UserAddItem user name price
 
 let removeItem user =
-    SelectionPromptExtensions
-        .Title(SelectionPrompt(), "Select [green]item[/] to remove:")
+    SelectionPromptExtensions.Title(SelectionPrompt(), "Select [green]item[/] to remove:")
         .AddChoices(GetItems user)
-        .UseConverter(fun item -> item.Name)
+        .UseConverter(Func<_, _>(Item.GetName))
     |> AnsiConsole.Prompt
     |> user.RemoveItem
 
@@ -277,18 +276,18 @@ let putUser username = route "/accountBalance" >=> warbler (fun _ ->
     | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`")
 
 let getItems username = warbler <| fun _ -> users.TryGetValue username |> function
-    | true, user -> user.Items |> Seq.map ToItemJson |> json |> Successful.ok
+    | true, user -> user.Items |> Seq.map Item.ToJson |> json |> Successful.ok
     | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
 
 let postItem username = warbler <| fun _ -> bindJson <| fun body -> users.TryGetValue username |> function
     | true, _ when body.name |> isNullOrWS -> RequestErrors.BAD_REQUEST "Name cannot be empty"
     | true, _ when body.price <= 0m -> RequestErrors.BAD_REQUEST "Price cannot be negative"
-    | true, user -> user.AddItem body.name body.price; Successful.NO_CONTENT
+    | true, user -> user.AddItemPost body; Successful.NO_CONTENT
     | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
 
 let delItem username = routef "/%s" <| fun name -> warbler <| fun _ -> users.TryGetValue username |> function
     | true, user ->
-        try user.Items |> Seq.find (fun i -> i.Name = name) |> user.RemoveItem; Successful.NO_CONTENT
+        try user.Items |> Seq.find (Item.GetName >> (=) name) |> user.RemoveItem; Successful.NO_CONTENT
         with :? KeyNotFoundException -> RequestErrors.NOT_FOUND $"Unknown item: `{name}`"
     | _ -> RequestErrors.NOT_FOUND $"Unknown user: `{username}`"
 
@@ -308,20 +307,21 @@ let startWebApi argv =
         ]
     ]
     
-    let swaggerConfig opts = SwaggerUIOptionsExtensions.SwaggerEndpoint(opts, "/swagger/v1/swagger.json", "v1")
+    let swaggerConfig = flip'' SwaggerUIOptionsExtensions.SwaggerEndpoint "/swagger/v1/swagger.json" "v1"
     
-    let appConfig = HttpsPolicyBuilderExtensions.UseHttpsRedirection >> fun builder ->
-        builder.UseSwaggerUI(swaggerConfig).UseGiraffe webApp
+    let appConfig =
+        HttpsPolicyBuilderExtensions.UseHttpsRedirection
+        >> (swaggerConfig |> flip' SwaggerUIBuilderExtensions.UseSwaggerUI)
+        >> flip' ApplicationBuilderExtensions.UseGiraffe webApp
     
     let webHostConfig builder =
-        ignore <| WebHostBuilderExtensions.Configure(builder, appConfig)
+        ignore <| WebHostBuilderExtensions
+            .Configure(builder, appConfig)
             .ConfigureServices(ServiceCollectionExtensions.AddGiraffe >> ignore)
             .UseUrls "https://localhost:5000"
     
-    let configureDefaults = flip' GenericHostBuilderExtensions.ConfigureWebHostDefaults
-    
     Host.CreateDefaultBuilder argv
-    |> configureDefaults webHostConfig
+    |> flip' GenericHostBuilderExtensions.ConfigureWebHostDefaults webHostConfig
     |> fun builder -> builder.Build()
     |> fun app -> app.StartAsync() |> ignore; app
 
